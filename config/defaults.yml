@@ -52,3 +52,7 @@ pins:
   gpuemu_ref: 690ff356463dbbd629daa79925c71bb4cf792328
   gpuemu_tag: v0.5.3
   nvtop: 3.1.0
+
+  # NeSI's own seff (nn_seff) and svisit, installed wherever Slurm is
+  opt_nesi_bin_repo: https://github.com/nesi/opt-nesi-bin.git
+  opt_nesi_bin_ref: aa26eb44807d9b5073d73deb2f0d4fe0fc312762

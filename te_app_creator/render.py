@@ -96,7 +96,11 @@ def context(spec: Spec, interface: str, defaults: dict[str, Any]) -> dict[str, A
         pip = "pip3 --no-cache-dir"
         os_codename = "jammy"
 
-    fleet = ",".join(f"{card}:{gpu['vram']}" for card in gpu["cards"])
+    # The image's GPUs when the launch form does not say: in "choose" mode, the
+    # first card on offer; otherwise all of them
+    choose = gpu["enabled"] and gpu["mode"] == "choose"
+    cards = gpu["cards"][:1] if choose else gpu["cards"]
+    fleet = ",".join(f"{card}:{gpu['vram']}" for card in cards)
 
     return {
         "app": app,
@@ -122,6 +126,9 @@ def context(spec: Spec, interface: str, defaults: dict[str, Any]) -> dict[str, A
         "gpu_cards": GPU_CARDS,
         "vram_options": [v for v in VRAM_OPTIONS],
         "fleet": fleet,
+        "gpu_choose": choose,
+        # whether submit.yml.erb sets GPUEMU_FLEET from the launch form
+        "fleet_from_form": gpu["enabled"] and (choose or gpu["session_form"]),
         "slurm": slurm,
         "slurm_only": slurm["enabled"] and not gpu["enabled"],
         "lmod": lmod,
@@ -177,6 +184,8 @@ def _plan(ctx: dict[str, Any]) -> list[tuple[str, str, int]]:
     if ctx["slurm_only"]:
         files.append(("docker/scripts/slurm-emulator", "docker/scripts/slurm-emulator", EXECUTABLE))
         files.append(("docker/scripts/slurm-cpu-node.py", "docker/scripts/slurm-cpu-node.py", REGULAR))
+    if ctx["slurm"]["enabled"]:
+        files.append(("docker/scripts/slurm-nesi-tools.py", "docker/scripts/slurm-nesi-tools.py", REGULAR))
     if ctx["data"]:
         files.append(("docker/scripts/fetch-data", "docker/scripts/fetch-data", EXECUTABLE))
         files.append(("docker/scripts/stage-training-data", "docker/scripts/stage-training-data", EXECUTABLE))

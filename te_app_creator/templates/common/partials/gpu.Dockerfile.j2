@@ -109,7 +109,8 @@ ENV GPUEMU_AUTOCLAIM=1 \
     GPUEMU_SLURM_DIR=/run/gpuemu/slurm \
     GPUEMU_MEM_TOTAL={{ gpu.vram }}
 
-# The node's cards, as name:memory. {% if gpu.session_form %}The launch form overrides this through
+# The node's cards, as name:memory. {% if gpu_choose %}The learner chooses the card on the
+# launch form, through submit.yml.erb; this is what a session gets without it.{% elif gpu.session_form %}The launch form overrides this through
 # submit.yml.erb; this is what a session gets without it.{% else %}Every session gets these.{% endif %}
 
 ENV GPUEMU_FLEET={{ fleet }}

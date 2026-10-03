@@ -1,4 +1,17 @@
-{% if gpu.enabled and gpu.session_form %}
+{% if gpu_choose %}
+
+   # The session's one emulated GPU, chosen on the launch form. Only the cards
+   # this app offers are accepted; anything else gets the first of them.
+   cards = %w[{{ gpu.cards | join(" ") }}]
+   card = cards.include?(gpu_card.to_s.strip) ? gpu_card.to_s.strip : cards.first
+{% if gpu.session_form %}
+   sizes = %w[{{ vram_options | join(" ") }}]
+   vram = sizes.include?(gpu_vram.to_s.strip) ? gpu_vram.to_s.strip : "{{ gpu.vram }}"
+{% else %}
+   vram = "{{ gpu.vram }}"
+{% endif %}
+   fleet = "#{card}:#{vram}"
+{% elif gpu.enabled and gpu.session_form %}
 
    # The emulated GPUs, from the per-card memory controls on the form. "off"
    # leaves a card out entirely, so asking for it is refused rather than

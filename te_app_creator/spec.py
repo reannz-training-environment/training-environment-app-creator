@@ -24,14 +24,15 @@ INTERFACES = {
     "codeserver": {"label": "VS Code", "short": "vscode"},
 }
 
-# The cards the GPU emulator knows, in the order the NeSI GPU app lists them.
-# slurm: what --gpus-per-node asks for; memory: the real board's size.
+# The cards the GPU emulator knows, by the name --gpus-per-node asks for, in
+# the order the NeSI GPU app lists them. label tells cards apart on its own;
+# model is the card without its memory; memory is the real board's.
 GPU_CARDS = {
-    "l4": {"label": "NVIDIA L4", "memory": "24 GB"},
-    "a100_40": {"label": "NVIDIA A100 40 GB", "memory": "40 GB"},
-    "a100": {"label": "NVIDIA A100 80 GB", "memory": "80 GB"},
-    "h100": {"label": "NVIDIA H100 NVL", "memory": "94 GB"},
-    "pro_6000": {"label": "NVIDIA RTX PRO 6000", "memory": "96 GB"},
+    "l4": {"label": "NVIDIA L4", "model": "NVIDIA L4", "memory": "24 GB"},
+    "a100_40": {"label": "NVIDIA A100 40 GB", "model": "NVIDIA A100", "memory": "40 GB"},
+    "a100": {"label": "NVIDIA A100 80 GB", "model": "NVIDIA A100", "memory": "80 GB"},
+    "h100": {"label": "NVIDIA H100 NVL", "model": "NVIDIA H100 NVL", "memory": "94 GB"},
+    "pro_6000": {"label": "NVIDIA RTX PRO 6000", "model": "NVIDIA RTX PRO 6000", "memory": "96 GB"},
 }
 
 VRAM_OPTIONS = ["100MiB", "200MiB", "512MiB", "1GiB", "2GiB", "4GiB", "full"]
@@ -146,6 +147,7 @@ def normalise(raw: dict[str, Any], defaults: dict[str, Any]) -> tuple[dict[str, 
     gpu_raw = features.get("gpu", {})
     gpu = {
         "enabled": bool(gpu_raw.get("enabled", False)),
+        "mode": gpu_raw.get("mode", "all"),
         "cards": [c for c in GPU_CARDS if c in gpu_raw.get("cards", list(GPU_CARDS))],
         "vram": gpu_raw.get("vram", "200MiB"),
         "pytorch": bool(gpu_raw.get("pytorch", True)),
@@ -153,11 +155,17 @@ def normalise(raw: dict[str, Any], defaults: dict[str, Any]) -> tuple[dict[str, 
         "session_form": bool(gpu_raw.get("session_form", True)),
     }
     slurm_raw = features.get("slurm", {})
+    # Mahuika-like names; NeSI's svisit recognises node names like c001
     slurm = {
         "enabled": bool(slurm_raw.get("enabled", False)),
-        "partition": slurm_raw.get("partition", "compute"),
-        "node_name": slurm_raw.get("node_name", "node001"),
+        "partition": slurm_raw.get("partition", "milan"),
+        "node_name": slurm_raw.get("node_name", "c001"),
     }
+    if gpu["enabled"] and gpu["mode"] == "choose" and len(gpu["cards"]) == 1:
+        warnings.append(
+            "features.gpu.mode is 'choose' but there is only one card to choose from; the launch "
+            "form will show a menu with one entry"
+        )
     if gpu["enabled"]:
         if slurm_raw.get("enabled") is False:
             warnings.append(

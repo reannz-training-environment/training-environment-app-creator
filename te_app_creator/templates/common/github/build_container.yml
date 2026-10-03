@@ -120,3 +120,18 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # A new package on ghcr.io is private, whatever the repository is, and
+      # there is no API to change that. The training environment pulls images
+      # without credentials, so it can only use a public one.
+      - name: The image must be public for the training environment to pull it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name="${GITHUB_REPOSITORY#*/}"
+          settings="https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${name}/settings"
+          visibility=$(gh api "orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${name}" --jq .visibility 2> /dev/null || echo unknown)
+          if [ "${visibility}" = "public" ]; then
+            echo "ok: the image is public"
+          else
+            echo "::warning::The image is ${visibility}, and the training environment can only pull public images. Make it public once, at ${settings} (Danger Zone, Change visibility)."
+          fi

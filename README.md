@@ -11,7 +11,7 @@ emulate (GPUs, Slurm, environment modules), the data and the software. The
 website opens a pull request here adding `apps/<name>.yml`. When it is merged,
 each interface becomes its own repository in this organisation:
 
-```
+```text
 training-environment-jupyter-<name>-app
 training-environment-rstudio-<name>-app
 training-environment-codeserver-<name>-app
@@ -45,7 +45,8 @@ flowchart LR
 3. Merge. The **Publish** workflow creates the repositories and comments with
    links to them. Each new repository's own workflows release `v<version>` and
    push its image, which takes a few minutes.
-4. Add the app to the training environment with the `ood_apps` block from the
+4. Make each new image public ([once per app](#images-must-be-public-once-per-app)).
+5. Add the app to the training environment with the `ood_apps` block from the
    app repository's README.
 
 ### Changing an app
@@ -74,10 +75,10 @@ The full list is [`schema/app.schema.json`](schema/app.schema.json); the
 [examples](examples) use them all.
 
 | Option | What it gives the app |
-|---|---|
+| --- | --- |
 | `interfaces` | One repository per interface. JupyterLab and VS Code apps are Ubuntu 22.04; RStudio apps are `rocker` images (`advanced.rstudio_image`, `advanced.r_version`) |
-| `features.gpu` | Emulated NVIDIA GPUs from the NeSI [GPU workshop app](https://github.com/nesi/training-environment-jupyter-gpu-app): `nvidia-smi`, `nvtop`, NVML, optionally PyTorch's `torch.cuda` and Numba's CUDA simulator. Always brings the Slurm emulator, which is how a GPU is requested. No physical GPU is involved |
-| `features.slurm` | A single-node Slurm emulator in the session (`sbatch`, `squeue`, `sacct`, `seff`, ...). Without GPUs it presents a CPU node with the given partition and node name |
+| `features.gpu` | Emulated NVIDIA GPUs from the NeSI [GPU workshop app](https://github.com/nesi/training-environment-jupyter-gpu-app): `nvidia-smi`, `nvtop`, NVML, optionally PyTorch's `torch.cuda` and Numba's CUDA simulator. `mode: all` puts every listed card on the node; `mode: choose` gives each session one GPU, picked from a menu on the launch form. Always brings the Slurm emulator, which is how a GPU is requested. No physical GPU is involved |
+| `features.slurm` | A single-node Slurm emulator in the session (`sbatch`, `squeue`, `sacct`, ...), with NeSI's own `seff` and `svisit` from [opt-nesi-bin](https://github.com/nesi/opt-nesi-bin). Without GPUs it presents a CPU node with the given partition and node name (default `milan`, `c001`) |
 | `features.lmod` | Lmod, working in terminals and batch jobs. Conda packages become modules: `module load samtools` |
 | `software.conda` | Packages from conda-forge and bioconda, in one environment; each command is on `PATH`, or in its package's module with Lmod |
 | `software.pip`, `software.apt` | Python and system packages |
@@ -112,13 +113,15 @@ the secret `APP_CREATOR_APP_PRIVATE_KEY`.
 permissions, saved as the secret `APP_CREATOR_TOKEN`. Simpler, but it acts as
 the person who made it, and it expires.
 
-### Images must be public
+### Images must be public, once per app
 
-The cluster pulls images from `ghcr.io` without credentials, so app
-repositories are public by default, as the NeSI apps are. After the first image
-of a new app is pushed, check its package page in the organisation's
-*Packages* tab says *Public*. If it does not, change it in the package's
-settings (*Danger zone → Change visibility*). This is needed once per app.
+The cluster pulls images from `ghcr.io` without credentials. A new package is
+private even when its repository is public, and GitHub has no API to change
+that, so after each new app's first image is pushed, someone with admin rights
+opens `https://github.com/orgs/reannz-training-environment/packages/container/<repository>/settings`
+and uses *Change visibility* to make it public. The Publish comment links to
+the settings of every repository it creates, and each app's build workflow
+warns until its image is public.
 
 ### Pull requests for every change
 
@@ -142,7 +145,7 @@ docker build --platform linux/amd64 build/training-environment-jupyter-slurm-cpu
 a `--dry-run`.
 
 | Path | |
-|---|---|
+| --- | --- |
 | `apps/` | one spec per app; what the website adds |
 | `examples/` | specs that use every option, built by CI when the templates change |
 | `schema/app.schema.json` | what a spec may contain |
