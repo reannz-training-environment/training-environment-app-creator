@@ -1,0 +1,17 @@
+# A REANNZ training environment app, from the app creator website.
+# Merging it creates, or updates, one repository per interface:
+#   training-environment-jupyter-website-token-test-app
+# Every field is described in https://github.com/reannz-training-environment/training-environment-app-creator/blob/main/schema/app.schema.json
+schema_version: 1
+name: website-token-test
+title: Website token test
+version: 0.1.0
+interfaces:
+  - jupyter
+resources:
+  cpu: 2
+  memory_gb: 4
+  wall_time_hours:
+    default: 8
+    min: 4
+    max: 12
