@@ -70,7 +70,8 @@ def test_slurm_only_emulator_is_not_counted_as_gpu():
 
 def test_human_sizes():
     assert sizes.human(0) == "0 B"
-    assert sizes.human(1_500) == "2 kB"
+    assert sizes.human(1_500) == "1.5 kB"
+    assert sizes.human(1_180_000) == "1.2 MB"
     assert sizes.human(118 * MB) == "118 MB"
     assert sizes.human(2_345 * MB) == "2.3 GB"
 

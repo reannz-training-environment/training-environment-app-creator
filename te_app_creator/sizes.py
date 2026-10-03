@@ -44,13 +44,11 @@ BASE_LABEL = {
 
 
 def human(n: float) -> str:
-    """Bytes as GB or MB, the way Docker counts them (1 GB = 1000^3 bytes)."""
-    if n >= 1e9:
-        return f"{n / 1e9:.1f} GB"
-    if n >= 1e6:
-        return f"{n / 1e6:.0f} MB"
-    if n >= 1e3:
-        return f"{n / 1e3:.0f} kB"
+    """Bytes the way Docker counts them (1 GB = 1000^3 bytes), with a decimal place below 10."""
+    for unit, size in (("GB", 1e9), ("MB", 1e6), ("kB", 1e3)):
+        if n >= size:
+            value = n / size
+            return f"{value:.1f} {unit}" if value < 10 or unit == "GB" else f"{value:.0f} {unit}"
     return f"{int(n)} B"
 
 
