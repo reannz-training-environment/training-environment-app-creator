@@ -42,10 +42,11 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# The Python side of the GPU stack.{% if gpu.pytorch %} PyTorch is the CPU build: the CUDA build is
-# far larger and could not run anyway; the emulator is what makes torch.cuda work.{% endif %}
+# The Python side of the GPU stack; profile_plot draws Slurm job profiles with
+# matplotlib.{% if gpu.pytorch %} PyTorch is the CPU build: the CUDA build is far larger and
+# could not run anyway; the emulator is what makes torch.cuda work.{% endif %}
 
-RUN {{ pip }} install nvidia-ml-py{% if gpu.numba %} numba{% endif %}{% if iface.key == "jupyter" %} jupyterlab-nvdashboard{% endif %}{% if gpu.pytorch %} \
+RUN {{ pip }} install nvidia-ml-py matplotlib{% if gpu.numba %} numba{% endif %}{% if iface.key == "jupyter" %} jupyterlab-nvdashboard{% endif %}{% if gpu.pytorch %} \
     && {{ pip }} install --index-url https://download.pytorch.org/whl/cpu torch torchvision{% endif +%}
 
 {% if gpu.numba %}
@@ -81,7 +82,7 @@ RUN mkdir -p /tmp/gpu-app \
 # test suite, the NVML shim loading and enumerating a device{% if gpu.numba %}, and a real
 # @cuda.jit kernel running in the simulator{% endif %}.
 RUN cd /opt/gpuemu/src \
-    && {{ pip }} install pytest \
+    && {{ pip }} install pytest pyyaml \
     && python3 -m pytest tests -q \
     && gpuemud --once \
     && nvidia-smi -L \
