@@ -1,0 +1,28 @@
+{% include "partials/header.Dockerfile.j2" %}
+
+FROM {{ advanced.rstudio_image }}:{{ advanced.r_version }}
+
+{% include "partials/system-rocker.Dockerfile.j2" %}
+
+{% include "partials/ood-k8s.Dockerfile.j2" %}
+{% include "partials/apt.Dockerfile.j2" %}
+{% include "partials/lmod.Dockerfile.j2" %}
+{% include "partials/gpu.Dockerfile.j2" %}
+{% include "partials/slurm.Dockerfile.j2" %}
+{% include "partials/conda.Dockerfile.j2" %}
+{% if has_r_packages %}
+
+# R packages requested in the app spec; the script fails the build if any of
+# them cannot be loaded afterwards
+COPY scripts/install-r-packages.R /opt/app-creator/install-r-packages.R
+RUN Rscript /opt/app-creator/install-r-packages.R
+{% endif %}
+{% if pip_packages %}
+
+# Python packages requested in the app spec (docker/requirements.txt)
+COPY requirements.txt /opt/app-creator/requirements.txt
+RUN {{ pip }} install -r /opt/app-creator/requirements.txt
+{% endif %}
+{% include "partials/data.Dockerfile.j2" %}
+{% include "partials/custom.Dockerfile.j2" %}
+{% include "partials/smoke-test.Dockerfile.j2" %}

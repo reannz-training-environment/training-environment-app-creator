@@ -1,0 +1,25 @@
+{% include "partials/header.Dockerfile.j2" %}
+
+FROM ubuntu:{{ pins.ubuntu }}
+
+{% include "partials/system-ubuntu.Dockerfile.j2" %}
+
+{% include "partials/ood-k8s.Dockerfile.j2" %}
+{% include "partials/apt.Dockerfile.j2" %}
+{% include "partials/lmod.Dockerfile.j2" %}
+{% include "partials/gpu.Dockerfile.j2" %}
+{% include "partials/slurm.Dockerfile.j2" %}
+{% include "partials/conda.Dockerfile.j2" %}
+
+# install JupyterLab{% if pip_packages %}, with the Python packages requested in the app spec
+# (docker/requirements.txt) resolved together with it{% endif %}
+
+{% if pip_packages %}
+COPY requirements.txt /opt/app-creator/requirements.txt
+RUN {{ pip }} install jupyterlab -r /opt/app-creator/requirements.txt
+{% else %}
+RUN {{ pip }} install jupyterlab
+{% endif %}
+{% include "partials/data.Dockerfile.j2" %}
+{% include "partials/custom.Dockerfile.j2" %}
+{% include "partials/smoke-test.Dockerfile.j2" %}

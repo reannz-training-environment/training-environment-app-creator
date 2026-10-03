@@ -1,0 +1,44 @@
+{% if slurm_only %}
+
+# ---------------------------------------------------------------------------
+# Slurm emulator
+#
+# A single-node Slurm inside the session: sbatch, squeue, scancel, sinfo,
+# sacct, scontrol, srun and seff, with Slurm's flags, output and job states.
+# It is the scheduler from the NeSI GPU workshop app
+# ({{ pins.gpuemu_repo }}, {{ pins.gpuemu_tag }}),
+# set up by scripts/slurm-cpu-node.py as a CPU node with no GPUs. It is a
+# teaching scaffold, not Slurm: one node, first come first served, and jobs
+# run as the learner inside the session.
+# ---------------------------------------------------------------------------
+{% include "partials/gpuemu-fetch.Dockerfile.j2" %}
+COPY scripts/slurm-cpu-node.py /opt/app-creator/slurm-cpu-node.py
+COPY scripts/slurm-emulator /usr/local/bin/slurm-emulator
+RUN mkdir -p /tmp/gpu-app \
+    && cd /tmp/gpu-app \
+    && git init -q \
+    && git fetch -q --depth 1 "${GPUEMU_REPO}" "${GPUEMU_REF}" \
+    && git checkout -q FETCH_HEAD \
+    && mkdir -p /opt/gpuemu \
+    && mv docker/gpuemu /opt/gpuemu/src \
+    && cd / \
+    && rm -rf /tmp/gpu-app \
+    && cd /opt/gpuemu/src \
+    && {{ pip }} install . \
+    && SLURM_PY="$(python3 -c 'import gpuemu.slurm as s; print(s.__file__)')" \
+    && sed -i "s/'gpuemu-ctl start'/'slurm-emulator start'/" "${SLURM_PY}" \
+    && grep -q "'slurm-emulator start'" "${SLURM_PY}" \
+    && cat /opt/app-creator/slurm-cpu-node.py >> "${SLURM_PY}" \
+    && python3 -m compileall -q "$(dirname "${SLURM_PY}")" \
+    && cd /usr/local/bin \
+    && rm -f gpuemud gpuemu-ctl gpuemu-burn gpuemu-seed-workshop \
+    && chmod 0755 /usr/local/bin/slurm-emulator \
+    && install -d /run/gpuemu /run/gpuemu/slurm/jobs \
+    && chmod 1777 /run/gpuemu /run/gpuemu/slurm /run/gpuemu/slurm/jobs
+
+ENV GPUEMU_STATE_FILE=/run/gpuemu/state.bin \
+    GPUEMU_SLURM_DIR=/run/gpuemu/slurm \
+    SLURM_EMU_GPUS=0 \
+    SLURM_EMU_NODE_NAME={{ slurm.node_name }} \
+    SLURM_EMU_PARTITION={{ slurm.partition }}
+{% endif %}

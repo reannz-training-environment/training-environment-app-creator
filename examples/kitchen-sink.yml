@@ -1,0 +1,65 @@
+# Every option the app creator has, on all three interfaces. CI builds the
+# images of every example whenever the generator or its templates change.
+schema_version: 1
+name: kitchen-sink
+title: Kitchen sink
+description: |
+  Every feature of the app creator at once: emulated GPUs with Slurm,
+  environment modules, conda, pip, apt and R software, VS Code extensions,
+  and data from GitHub and from a download.
+version: 0.1.0
+visibility: public
+maintainers: [geoffreyweal]
+workshop_url: https://github.com/reannz-training-environment/training-environment-app-creator
+
+interfaces: [jupyter, rstudio, codeserver]
+
+resources:
+  cpu: 4
+  memory_gb: 8
+  wall_time_hours: {default: 8, min: 2, max: 12}
+
+features:
+  gpu:
+    enabled: true
+    cards: [l4, a100]
+    vram: 200MiB
+    pytorch: true
+    numba: true
+    session_form: true
+  slurm:
+    enabled: true
+  lmod:
+    enabled: true
+
+software:
+  apt: [pigz, bc]
+  pip: [pandas, "matplotlib>=3.7"]
+  conda:
+    channels: [conda-forge, bioconda]
+    packages: [samtools, "seqkit>=2.5"]
+  r:
+    cran: [palmerpenguins]
+    bioconductor: [BiocGenerics]
+    github: [G-Thomson/Manu]
+  vscode_extensions: [redhat.vscode-yaml]
+
+data:
+  - type: github
+    repo: nesi/intro-python
+    ref: v0.5.0
+    path: data
+    dest: intro-python/data
+  - type: url
+    url: https://github.com/GenomicsAotearoa/introduction-to-shell/releases/download/2024-July/shell_data.zip
+    dest: shell_data
+
+advanced:
+  start_dir: intro-python
+  rstudio_image: rocker/rstudio
+  r_version: 4.5.3
+  dockerfile: |
+    # an example of extra Dockerfile instructions
+    RUN echo "built by the kitchen sink example" > /opt/app-creator/custom-step.txt
+  startup: |
+    echo "kitchen sink session started at $(date)"

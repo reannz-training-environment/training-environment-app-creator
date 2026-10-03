@@ -1,0 +1,21 @@
+# A CPU-only HPC teaching app: the Slurm emulator presents a plain compute
+# node, and the conda software is loaded with `module load`.
+schema_version: 1
+name: slurm-cpu
+title: Slurm on a CPU node
+description: Practise submitting batch jobs and loading environment modules.
+version: 0.1.0
+
+interfaces: [jupyter]
+
+features:
+  slurm:
+    enabled: true
+    partition: milan
+    node_name: c001
+  lmod:
+    enabled: true
+
+software:
+  conda:
+    packages: [samtools, fastqc]

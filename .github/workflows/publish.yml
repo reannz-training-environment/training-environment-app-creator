@@ -1,0 +1,120 @@
+# Creates and updates app repositories when app specs reach main.
+#
+# For each interface of each added or changed spec in apps/:
+# * a new app gets its repository, training-environment-<interface>-<name>-app,
+#   with the generated files; the repository's own workflows then release
+#   v<version> and push its image to ghcr.io
+# * an existing app gets a pull request with the regenerated files
+#
+# Run it by hand to republish one app, or every app after a template change.
+#
+# GITHUB_TOKEN cannot create repositories, so this needs either a GitHub App
+# (variable APP_CREATOR_APP_ID, secret APP_CREATOR_APP_PRIVATE_KEY) or a token
+# (secret APP_CREATOR_TOKEN); see the README.
+name: Publish
+
+on:
+  push:
+    branches: [main]
+    paths: ["apps/**"]
+  workflow_dispatch:
+    inputs:
+      app:
+        description: "App name to publish, or 'all' to regenerate every app"
+        required: true
+      dry_run:
+        description: "Only report what would happen"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Work out which apps to publish
+        id: specs
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          APP: ${{ inputs.app }}
+        run: |
+          shopt -s nullglob
+          if [ "${EVENT}" = "workflow_dispatch" ]; then
+            if [ "${APP}" = "all" ]; then
+              specs=$(echo apps/*.yml)
+            else
+              specs="apps/${APP}.yml"
+              [ -f "${specs}" ] || { echo "::error::there is no ${specs}"; exit 1; }
+            fi
+          elif [ -z "${BEFORE}" ] || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ]; then
+            specs=$(echo apps/*.yml)
+          else
+            specs=$(git diff --name-only --diff-filter=AM "${BEFORE}" "${GITHUB_SHA}" -- 'apps/*.yml' | xargs)
+          fi
+          echo "specs=${specs}" >> "$GITHUB_OUTPUT"
+          echo "publishing: ${specs:-nothing}"
+
+      - name: Get a token from the GitHub App
+        id: app-token
+        if: vars.APP_CREATOR_APP_ID != '' && steps.specs.outputs.specs != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.APP_CREATOR_APP_ID }}
+          private-key: ${{ secrets.APP_CREATOR_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Commit as the GitHub App
+        if: steps.app-token.outputs.app-slug != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          id=$(gh api "/users/${SLUG}%5Bbot%5D" --jq .id)
+          echo "GIT_AUTHOR_NAME=${SLUG}[bot]" >> "$GITHUB_ENV"
+          echo "GIT_AUTHOR_EMAIL=${id}+${SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_ENV"
+
+      - name: Publish
+        if: steps.specs.outputs.specs != ''
+        env:
+          APP_CREATOR_TOKEN: ${{ steps.app-token.outputs.token || secrets.APP_CREATOR_TOKEN }}
+          SPECS: ${{ steps.specs.outputs.specs }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ -z "${APP_CREATOR_TOKEN}" ]; then
+            echo "::error::No token that can create repositories. Set up the GitHub App (APP_CREATOR_APP_ID variable and APP_CREATOR_APP_PRIVATE_KEY secret) or an APP_CREATOR_TOKEN secret - see the README."
+            exit 1
+          fi
+          args=(--report report.json --markdown report.md)
+          [ "${DRY_RUN}" = "true" ] && args+=(--dry-run)
+          python -m te_app_creator publish ${SPECS} "${args[@]}"
+
+      - name: Report
+        if: always() && steps.specs.outputs.specs != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          [ -f report.md ] || exit 0
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          if [ "${EVENT}" = "push" ]; then
+            pr=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" --jq '.[0].number // empty')
+            if [ -n "${pr}" ]; then
+              gh pr comment "${pr}" --body-file report.md
+            fi
+          fi

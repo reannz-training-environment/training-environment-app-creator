@@ -1,0 +1,8 @@
+# Anything in docker/ that is not used by the Dockerfile stays out of the
+# build context. macOS droppings would otherwise end up in the image, and from
+# there in a learner's home directory.
+**/.DS_Store
+**/._*
+**/__MACOSX/
+**/__pycache__/
+**/*.pyc

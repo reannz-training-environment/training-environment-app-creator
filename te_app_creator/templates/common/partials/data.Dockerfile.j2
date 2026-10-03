@@ -1,0 +1,24 @@
+{% if data %}
+
+# ---------------------------------------------------------------------------
+# Workshop data, baked into /opt/training-data, which mirrors the home
+# directory. When a session starts, stage-training-data copies it into the
+# learner's home without overwriting anything already there, so their work
+# survives a session restart.
+# ---------------------------------------------------------------------------
+COPY scripts/fetch-data scripts/stage-training-data /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/fetch-data /usr/local/bin/stage-training-data
+{% for item in data %}
+
+{% if item.type == "github" %}
+# https://github.com/{{ item.repo }} at {{ item.ref }}{% if item.path %}, folder {{ item.path }}{% endif %} -> ~/{{ item.dest }}
+RUN fetch-data github "{{ item.repo }}" "{{ item.ref }}" "{{ item.path }}" "{{ item.dest }}"
+{% else %}
+# {{ item.url }} -> ~/{{ item.dest }}
+RUN fetch-data url "{{ item.url }}" {{ "yes" if item.extract else "no" }} "{{ item.sha256 or "-" }}" "{{ item.dest }}"
+{% endif %}
+{% endfor %}
+
+RUN chown -R root:root /opt/training-data \
+    && chmod -R a+rX,go-w /opt/training-data
+{% endif %}

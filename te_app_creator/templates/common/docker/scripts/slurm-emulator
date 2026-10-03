@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Start, stop or check the Slurm emulator's scheduler in this session.
+#
+#   slurm-emulator start | stop | restart | status
+#
+# The session starts it before the interface comes up. If jobs stay PENDING
+# with no reason, `slurm-emulator restart` brings it back.
+set -euo pipefail
+
+slurm_dir="${GPUEMU_SLURM_DIR:-/run/gpuemu/slurm}"
+pid_file="${slurm_dir}/slurmd.pid"
+log_file="$(dirname "${slurm_dir}")/slurm-emulator.log"
+
+running() {
+    [ -f "${pid_file}" ] && kill -0 "$(cat "${pid_file}" 2> /dev/null)" 2> /dev/null
+}
+
+start() {
+    if running; then
+        echo "slurm-emulator: running (pid $(cat "${pid_file}"))"
+        return 0
+    fi
+    mkdir -p "${slurm_dir}/jobs"
+    setsid python3 -c 'from gpuemu.slurm import slurmd; raise SystemExit(slurmd([]))' \
+        >> "${log_file}" 2>&1 < /dev/null &
+    # the scheduler writes its own pid file once it is up; sbatch looks for it
+    for _ in $(seq 1 50); do
+        running && break
+        sleep 0.1
+    done
+    if ! running; then
+        echo "slurm-emulator: the scheduler did not start; see ${log_file}" >&2
+        return 1
+    fi
+    echo "slurm-emulator: running (pid $(cat "${pid_file}"))"
+}
+
+stop() {
+    if ! running; then
+        echo "slurm-emulator: not running"
+        return 0
+    fi
+    kill "$(cat "${pid_file}")"
+    for _ in $(seq 1 50); do
+        running || break
+        sleep 0.1
+    done
+    echo "slurm-emulator: stopped"
+}
+
+case "${1:-status}" in
+start) start ;;
+stop) stop ;;
+restart)
+    stop
+    start
+    ;;
+status)
+    if running; then
+        echo "slurm-emulator: running (pid $(cat "${pid_file}")), node ${SLURM_EMU_NODE_NAME:-?}, partition ${SLURM_EMU_PARTITION:-?}"
+    else
+        echo "slurm-emulator: NOT RUNNING - start it with 'slurm-emulator start'"
+        exit 1
+    fi
+    ;;
+*)
+    echo "usage: slurm-emulator start|stop|restart|status" >&2
+    exit 2
+    ;;
+esac

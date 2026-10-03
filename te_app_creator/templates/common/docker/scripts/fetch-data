@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Put one data source into /opt/training-data/<dest> while the image is built.
+#
+#   fetch-data github <owner/repo> <ref> <path> <dest>
+#   fetch-data url <url> <yes|no: unpack> <sha256, or -> <dest>
+#
+# A GitHub source is fetched at <ref> - a branch, tag or commit - without its
+# history; <path> picks one folder of it, or "" for the whole repository.
+#
+# A URL source is downloaded and, if a sha256 is given, checked. With "yes" an
+# archive (.zip, .tar.gz, .tgz, .tar.bz2, .tar.xz, .tar) is unpacked into
+# <dest>; an archive whose contents are a single folder is unpacked without
+# that folder, so shell_data.zip lands in ~/<dest> and not ~/<dest>/shell_data.
+# With "no" the file is put in <dest> as it is.
+#
+# /opt/training-data mirrors the learner's home directory: stage-training-data
+# copies it there when a session starts.
+set -euo pipefail
+
+ROOT=/opt/training-data
+
+die() {
+    echo "fetch-data: $*" >&2
+    exit 1
+}
+
+copy_into() {
+    mkdir -p "${ROOT}/$2"
+    cp -a "$1"/. "${ROOT}/$2"/
+}
+
+[ $# -eq 5 ] || die "usage: fetch-data github <owner/repo> <ref> <path> <dest> | url <url> <yes|no> <sha256|-> <dest>"
+kind="$1"
+shift
+
+work="$(mktemp -d)"
+trap 'rm -rf "${work}"' EXIT
+
+case "${kind}" in
+github)
+    repo="$1" ref="$2" path="$3" dest="$4"
+    git -C "${work}" init -q src
+    git -C "${work}/src" fetch -q --depth 1 "https://github.com/${repo}.git" "${ref}" \
+        || die "cannot fetch '${ref}' of https://github.com/${repo} - is the repository public, and does the ref exist?"
+    git -C "${work}/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
+    commit="$(git -C "${work}/src" rev-parse HEAD)"
+    rm -rf "${work}/src/.git"
+    src="${work}/src${path:+/${path}}"
+    [ -d "${src}" ] || die "https://github.com/${repo} at ${ref} has no folder '${path}'"
+    copy_into "${src}" "${dest}"
+    echo "fetch-data: https://github.com/${repo} at ${commit}${path:+, folder ${path}} -> ~/${dest}"
+    ;;
+url)
+    url="$1" unpack="$2" sha256="$3" dest="$4"
+    name="${url%%[?#]*}"
+    name="${name##*/}"
+    [ -n "${name}" ] || die "${url} does not end in a file name"
+    curl -fsSL --retry 3 -o "${work}/${name}" "${url}" || die "cannot download ${url}"
+    if [ "${sha256}" != "-" ]; then
+        echo "${sha256}  ${work}/${name}" | sha256sum -c --quiet - || die "${url} does not match sha256 ${sha256}"
+    fi
+    if [ "${unpack}" = "yes" ]; then
+        mkdir -p "${work}/x"
+        case "${name,,}" in
+            *.zip) unzip -q "${work}/${name}" -d "${work}/x" -x '__MACOSX/*' ;;
+            *.tar.gz | *.tgz) tar -xzf "${work}/${name}" -C "${work}/x" ;;
+            *.tar.bz2 | *.tbz2) tar -xjf "${work}/${name}" -C "${work}/x" ;;
+            *.tar.xz | *.txz) tar -xJf "${work}/${name}" -C "${work}/x" ;;
+            *.tar) tar -xf "${work}/${name}" -C "${work}/x" ;;
+            *) die "do not know how to unpack ${name}" ;;
+        esac
+        find "${work}/x" \( -name .DS_Store -o -name '._*' \) -delete
+        src="${work}/x"
+        shopt -s nullglob dotglob
+        entries=("${src}"/*)
+        shopt -u nullglob dotglob
+        if [ ${#entries[@]} -eq 1 ] && [ -d "${entries[0]}" ]; then
+            src="${entries[0]}"
+        fi
+        copy_into "${src}" "${dest}"
+    else
+        mkdir -p "${ROOT}/${dest}"
+        cp "${work}/${name}" "${ROOT}/${dest}/${name}"
+    fi
+    echo "fetch-data: ${url} -> ~/${dest}"
+    ;;
+*)
+    die "unknown source type '${kind}'"
+    ;;
+esac

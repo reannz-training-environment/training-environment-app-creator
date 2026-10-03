@@ -1,0 +1,43 @@
+<%
+   user = OodSupport::User.new
+
+   services_node = Resolv.getaddress("servicesnode")
+{% include "snippets/fleet.erb.j2" %}
+%>
+---
+batch_connect:
+  template: "basic"
+script:
+  accounting_id: "<%= account %>"
+  wall_time: "<%= wall_time.to_i * 3600 %>"
+  native:
+    container:
+      name: "{{ container_name }}"
+      # This tag is the image a session actually runs, and it must match the git
+      # tag this file is released under (CI checks that on tag builds). The
+      # training-environment config's `k8s_container` does not control it; that
+      # value only tells the pod pre-puller which image to cache.
+      image: "{{ image }}:{{ image_tag }}"
+      command: ["/bin/bash","-l","<%= staged_root %>/job_script_content.sh"]
+      working_dir: "<%= Etc.getpwnam(ENV['USER']).dir %>"
+      restart_policy: 'OnFailure'
+      env:
+        NB_UID: "<%= user.uid %>"
+        NB_USER: "<%= user.name %>"
+        NB_GID: "<%= user.group.id %>"
+        HOME: "<%= user.home %>"
+        LOG_DIR: "<%= staged_root %>"
+        SHELL: "/bin/bash"
+        TZ: "{{ defaults.timezone }}"
+{% if gpu.enabled and gpu.session_form %}
+        # the session's GPUs, as name:memory entries; read by gpuemud at
+        # startup and by sbatch to decide whether a requested card exists
+        GPUEMU_FLEET: "<%= fleet %>"
+{% endif %}
+      port: "8443"
+      cpu: "<%= cpu %>"
+      memory: "<%= memory %>Gi"
+{% include "snippets/mounts.yml.j2" %}
+    configmap:
+      files:
+{% include "snippets/k8-helper.yml.j2" %}

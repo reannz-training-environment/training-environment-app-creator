@@ -1,0 +1,159 @@
+# Checks a pull request before it is merged:
+#
+# * the generator's tests pass and every app spec is valid
+# * the image of every app the pull request adds or changes builds - each image
+#   runs its own smoke test of every feature as part of the build
+# * when the generator, its templates or its config change, the examples are
+#   built instead, since every app is affected
+#
+# It comments on the pull request with what merging it will create or update.
+name: Validate
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      specs:
+        description: "Specs to test-build, space separated (default: every example)"
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: validate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      app_specs: ${{ steps.plan.outputs.app_specs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Test the generator
+        run: python -m pytest -q
+
+      - name: Validate every app spec
+        run: |
+          shopt -s nullglob
+          python -m te_app_creator validate apps/*.yml examples/*.yml
+
+      - name: Work out what to build
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          INPUT_SPECS: ${{ inputs.specs }}
+        run: |
+          shopt -s nullglob
+          app_specs=""
+          build_specs=""
+          if [ "${EVENT}" = "workflow_dispatch" ]; then
+            build_specs="${INPUT_SPECS:-$(echo examples/*.yml)}"
+          else
+            changed=$(git diff --name-only --diff-filter=AM "${BASE}" HEAD)
+            app_specs=$(echo "${changed}" | grep -E '^apps/[^/]+\.yml$' | xargs || true)
+            build_specs="${app_specs}"
+            if echo "${changed}" | grep -qE '^(te_app_creator|config|schema)/'; then
+              build_specs="${build_specs} $(echo examples/*.yml)"
+            fi
+          fi
+          build_specs=$(echo ${build_specs} | xargs -n1 | sort -u | xargs)
+          echo "app_specs=${app_specs}" >> "$GITHUB_OUTPUT"
+          if [ -n "${build_specs}" ]; then
+            echo "matrix=$(python -m te_app_creator matrix ${build_specs})" >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=[]" >> "$GITHUB_OUTPUT"
+          fi
+          echo "apps in this pull request: ${app_specs:-none}"
+          echo "images to build: ${build_specs:-none}"
+
+      - name: Summarise
+        id: summary
+        if: steps.plan.outputs.app_specs != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPECS: ${{ steps.plan.outputs.app_specs }}
+        run: |
+          {
+            echo "<!-- app-creator-summary -->"
+            echo "## What merging this pull request does"
+            echo
+            python -m te_app_creator summary ${SPECS} || true
+            echo
+            echo "Each image is test-built by this workflow before merging; see the checks below."
+          } > summary.md
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on the pull request
+        if: steps.plan.outputs.app_specs != '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          existing=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
+            --jq '[.[] | select(.body | startswith("<!-- app-creator-summary -->"))][0].id // empty')
+          if [ -n "${existing}" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -F body=@summary.md > /dev/null
+          else
+            gh pr comment "${PR}" --body-file summary.md
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.matrix != '[]' && needs.check.outputs.matrix != ''
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.check.outputs.matrix) }}
+    name: build ${{ matrix.app.repo }}
+    steps:
+      # images with PyTorch, conda or R packages need more disk than a runner has free
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Generate the app
+        env:
+          SPEC: ${{ matrix.app.spec }}
+          INTERFACE: ${{ matrix.app.interface }}
+        run: python -m te_app_creator render "${SPEC}" -i "${INTERFACE}" -o build
+
+      - name: form.yml and manifest.yml must parse the way Open OnDemand parses them
+        env:
+          REPO: ${{ matrix.app.repo }}
+        run: |
+          ruby -ryaml -e '
+            %w[form.yml manifest.yml].each do |f|
+              YAML.safe_load(File.read(File.join("build", ENV["REPO"], f)))
+              puts "ok: #{f}"
+            end
+          '
+
+      - uses: docker/setup-buildx-action@v3
+
+      # not pushed: the app's own repository builds and pushes its image
+      - name: Build the image, which runs its smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: build/${{ matrix.app.repo }}/docker
+          push: false
+          cache-from: type=gha,scope=${{ matrix.app.repo }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app.repo }}

@@ -1,0 +1,54 @@
+# Settings shared by every generated app.
+#
+# Changing a value here changes every app the next time it is generated, so a
+# pin bump (a new code-server, a new emulator release) is made once, here, and
+# reaches each app repo as an update pull request.
+
+# where app repositories are created, and the registry their images go to
+github_org: reannz-training-environment
+registry: ghcr.io
+
+# repositories are named <repo_prefix>-<interface>-<app name>-app
+repo_prefix: training-environment
+
+# Open OnDemand reaches a session through /node/<host>/<port>, where <host> is
+# the reverse DNS name of the k8s worker the pod runs on. JupyterLab has to be
+# told that same name for its base URL, as nodeName + this domain.
+node_domain: cloud.nesi.nz
+
+timezone: Pacific/Auckland
+
+# the Open OnDemand cluster that runs training sessions, as named in the
+# training-environment deployment
+ood_cluster: my-k8s-cluster
+
+pins:
+  # base image for the JupyterLab and VS Code apps
+  ubuntu: "22.04"
+
+  kubectl: v1.28.5
+
+  # nesi/training-environment-k8s-utils: find_host_port, save_passwd_as_secret,
+  # create_salt_and_sha1 and friends, which every app needs to start
+  k8s_utils_repo: https://github.com/nesi/training-environment-k8s-utils.git
+  k8s_utils_hash: 6298fb01f7a7c66a8454e3f0fd74437a32491423
+
+  # VS Code in the browser
+  code_server: 4.137.0
+
+  # used when an app spec does not choose
+  rstudio_image: rocker/rstudio
+  r_version: 4.5.3
+
+  # conda packages are installed with micromamba
+  micromamba: 2.8.1-1
+
+  # environment modules
+  lmod: 8.7.55
+
+  # The GPU emulator, and the Slurm emulator that comes with it, are taken
+  # from the NeSI GPU workshop app at this commit (tag v0.5.3).
+  gpuemu_repo: https://github.com/nesi/training-environment-jupyter-gpu-app.git
+  gpuemu_ref: 690ff356463dbbd629daa79925c71bb4cf792328
+  gpuemu_tag: v0.5.3
+  nvtop: 3.1.0

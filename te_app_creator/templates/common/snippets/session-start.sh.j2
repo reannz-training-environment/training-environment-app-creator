@@ -1,0 +1,49 @@
+{% if gpu.enabled %}
+
+# ---------------------------------------------------------------------------
+# Start the GPU emulator: gpuemud keeps the device state that nvidia-smi and
+# nvtop read, and gpuemu-slurmd runs batch jobs. Both have to be up before the
+# interface starts, otherwise the first thing a learner does - running
+# nvidia-smi - fails and the session looks broken.
+# ---------------------------------------------------------------------------
+mkdir -p /run/gpuemu/claims /run/gpuemu/slurm/jobs
+chmod 1777 /run/gpuemu /run/gpuemu/claims /run/gpuemu/slurm /run/gpuemu/slurm/jobs || true
+
+gpuemu-ctl start
+
+# fail loudly here rather than leaving a session where the GPU silently is not there
+if ! nvidia-smi -L; then
+    echo "ERROR: the GPU emulator did not start. Session will be unusable." >&2
+    gpuemu-ctl status >&2 || true
+    cat /run/gpuemu/gpuemud.log >&2 || true
+fi
+
+echo "TIMING - GPU emulator started at: $(date)"
+{% elif slurm.enabled %}
+
+# ---------------------------------------------------------------------------
+# Start the Slurm emulator's scheduler, which runs the jobs sbatch queues
+# ---------------------------------------------------------------------------
+mkdir -p /run/gpuemu/slurm/jobs
+chmod 1777 /run/gpuemu /run/gpuemu/slurm /run/gpuemu/slurm/jobs || true
+
+slurm-emulator start || echo "ERROR: the Slurm emulator did not start; batch jobs will stay PENDING" >&2
+
+echo "TIMING - Slurm emulator started at: $(date)"
+{% endif %}
+{% if data %}
+
+# copy the workshop data into the home directory
+# note: this will not overwrite files if they already exist, so changes won't
+#       be lost when restarting the app
+stage-training-data
+{% endif %}
+{% if advanced.startup %}
+
+# ---------------------------------------------------------------------------
+# Startup commands from the app spec (advanced.startup)
+# ---------------------------------------------------------------------------
+{{ advanced.startup }}
+
+cd "${HOME}"
+{% endif %}

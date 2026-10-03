@@ -1,0 +1,39 @@
+{% if conda_packages %}
+
+# ---------------------------------------------------------------------------
+# Conda software requested in the app spec (docker/conda/environment.yml),
+# installed with micromamba into one environment, /opt/conda/envs/apps.
+#
+{% if lmod %}
+# Every requested package becomes an environment module: `module load <name>`
+# puts that package's commands, and nothing else, on PATH.
+{% else %}
+# Every command of every requested package gets a small wrapper in
+# /opt/software/bin, which goes at the end of PATH so the system's own python3,
+# perl and friends still come first.
+{% endif %}
+# ---------------------------------------------------------------------------
+ARG MICROMAMBA_VERSION={{ pins.micromamba }}
+ENV MAMBA_ROOT_PREFIX=/opt/conda
+RUN curl -fsSL -o /usr/local/bin/micromamba \
+        "https://github.com/mamba-org/micromamba-releases/releases/download/${MICROMAMBA_VERSION}/micromamba-linux-64" \
+    && chmod 0755 /usr/local/bin/micromamba \
+    && micromamba --version
+
+COPY conda/ /opt/app-creator/conda/
+COPY scripts/make-conda-wrappers.py /opt/app-creator/make-conda-wrappers.py
+
+# The cleanup must run in this same RUN instruction: a later layer can hide a
+# file but cannot reclaim the space it took in this one.
+RUN micromamba create -y -p /opt/conda/envs/apps -f /opt/app-creator/conda/environment.yml \
+    && micromamba clean --all --yes \
+    && rm -rf /opt/conda/pkgs \
+    && python3 /opt/app-creator/make-conda-wrappers.py \
+        --prefix /opt/conda/envs/apps \
+        --packages /opt/app-creator/conda/packages.txt \
+        --mode {{ "lmod" if lmod else "path" }}
+{% if not lmod %}
+
+ENV PATH="${PATH}:/opt/software/bin"
+{% endif %}
+{% endif %}

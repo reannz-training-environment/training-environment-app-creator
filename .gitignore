@@ -1,0 +1,16 @@
+# generated apps (python -m te_app_creator render ... -o build)
+build/
+
+# publish reports
+report.json
+report.md
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+.DS_Store
+._*
+.idea/
+.vscode/

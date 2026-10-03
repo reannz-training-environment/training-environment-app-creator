@@ -1,0 +1,16 @@
+    mounts:
+      - type: nfs
+        name: home
+        host: <%= services_node %>
+        path: /srv/homes
+        destination_path: /home/shared
+      - type: host
+        name: nslcd-socket
+        host_type: Socket
+        path: /var/run/nslcd/socket
+        destination_path: /var/run/nslcd/socket
+      - type: host
+        name: nsswitch-conf
+        host_type: File
+        path: /etc/nsswitch.conf
+        destination_path: /etc/nsswitch.conf

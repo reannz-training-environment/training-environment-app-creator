@@ -1,0 +1,32 @@
+# Install the R packages requested in the app spec.
+#
+# install.packages() only warns when a package fails to install, which would
+# ship an image without it; so every package is loaded afterwards, and the
+# build fails if any of them cannot be.
+
+cran <- c({{ r_packages.cran | r_list }})
+bioconductor <- c({{ r_packages.bioconductor | r_list }})
+github <- c({{ r_packages.github | r_list }})
+
+options(Ncpus = max(1L, parallel::detectCores()))
+
+if (length(cran) > 0) {
+  install.packages(cran)
+}
+
+if (length(bioconductor) > 0) {
+  if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+  BiocManager::install(bioconductor, update = FALSE, ask = FALSE)
+}
+
+if (length(github) > 0) {
+  if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
+  for (repo in github) remotes::install_github(repo, upgrade = "never")
+}
+
+wanted <- c(cran, bioconductor)
+loads <- vapply(wanted, requireNamespace, logical(1), quietly = TRUE)
+if (!all(loads)) {
+  stop("these R packages did not install: ", paste(wanted[!loads], collapse = ", "))
+}
+cat("R packages installed:", paste(c(wanted, github), collapse = ", "), "\n")

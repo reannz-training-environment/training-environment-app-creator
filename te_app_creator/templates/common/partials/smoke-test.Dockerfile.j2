@@ -1,0 +1,5 @@
+
+# Check every feature of this app at build time, so a broken image fails here
+# rather than in front of a workshop (docker/scripts/smoke-test.sh)
+COPY scripts/smoke-test.sh /opt/app-creator/smoke-test.sh
+RUN bash /opt/app-creator/smoke-test.sh

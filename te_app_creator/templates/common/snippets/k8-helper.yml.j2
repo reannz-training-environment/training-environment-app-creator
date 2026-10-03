@@ -1,0 +1,12 @@
+        - filename: 'k8_helper'
+          data: |
+            #!/usr/bin/env bash
+
+            set -x
+
+            KEY=$1
+            VALUE=$(echo -n $2 | base64)
+            CFG="$(hostname)-secret"
+
+            kubectl get secret ${CFG} -o json | jq --arg key $KEY --arg value $VALUE '.data[$key] = $value'  | kubectl apply -f -
+          mount_path: '/opt/open_ondemand/helpers'

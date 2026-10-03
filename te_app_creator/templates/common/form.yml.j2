@@ -1,0 +1,47 @@
+---
+cluster: {{ defaults.ood_cluster | yaml_str }}
+
+form:
+  - cpu
+  - memory
+{% if gpu.enabled and gpu.session_form %}
+{% for card in gpu.cards %}
+  - vram_{{ card }}
+{% endfor %}
+{% endif %}
+  - wall_time
+
+attributes:
+  cpu: {{ app.resources.cpu }}
+  memory: {{ app.resources.memory_gb }}
+{% if gpu.enabled and gpu.session_form %}
+
+  # One control per emulated card. No physical GPU is involved: a card changes
+  # only the name, memory size, clocks and power the GPU tools report. Asking
+  # Slurm for a card that is switched off is refused, the same way the cluster
+  # refuses a card a partition lacks.
+  #
+  # The options are written out for every card rather than shared through a
+  # YAML anchor on purpose: Open OnDemand parses this file with YAML.safe_load
+  # and no aliases, so an anchor takes the app off the dashboard.
+{% for card in gpu.cards %}
+  vram_{{ card }}:
+    widget: select
+    label: {{ (gpu_cards[card].label ~ " - GPU memory") | yaml_str }}
+    help: |
+      Requested as `--gpus-per-node {{ card }}:1`. The real board has
+      {{ gpu_cards[card].memory }}; a small card makes out-of-memory errors cheap to teach.
+    options:
+{% for option in vram_options %}
+      - [{{ vram_label(option, gpu.vram) | yaml_str }}, {{ option | yaml_str }}]
+{% endfor %}
+      - ["Not on this node", "off"]
+    value: {{ gpu.vram | yaml_str }}
+{% endfor %}
+{% endif %}
+  wall_time:
+    widget: number_field
+    label: "Hours"
+    min: {{ app.resources.wall_time_hours.min }}
+    max: {{ app.resources.wall_time_hours.max }}
+    value: {{ app.resources.wall_time_hours.default }}

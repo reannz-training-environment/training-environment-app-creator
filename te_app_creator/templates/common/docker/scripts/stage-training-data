@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Copy the workshop data baked into this image into the home directory.
+#
+# Run when a session starts. Files that already exist are left alone, so a
+# learner's changes survive restarting the app; deleting a file brings the
+# original back at the next start.
+set -euo pipefail
+
+src=/opt/training-data
+[ -d "${src}" ] || exit 0
+
+rsync -rlt --ignore-existing "${src}"/ "${HOME}"/
+
+for dir in "${src}"/*/; do
+    echo "stage-training-data: ~/$(basename "${dir}") is ready"
+done

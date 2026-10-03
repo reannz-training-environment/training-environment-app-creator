@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+# send all output to pod.log
+exec &> >(tee -a "${LOG_DIR}/pod.log")
+
+echo "TIMING - Starting main script at: $(date)"
+
+# copying config file for debugging - updated path
+cp "${HOME}/ondemand_config.py" ./
+
+# Set working directory to home directory
+cd "${HOME}"
+
+set -x
+{% include "snippets/session-start.sh.j2" %}
+
+echo "TIMING - Starting jupyter at: $(date)"
+
+# launch JupyterLab
+jupyter lab --config="${CONFIG_FILE}"

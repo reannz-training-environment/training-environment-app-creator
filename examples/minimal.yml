@@ -1,0 +1,5 @@
+# The least a spec needs: a name, a title and an interface.
+schema_version: 1
+name: minimal
+title: Minimal
+interfaces: [jupyter]

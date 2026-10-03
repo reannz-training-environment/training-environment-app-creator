@@ -1,0 +1,137 @@
+{% if gpu.enabled %}
+
+# ---------------------------------------------------------------------------
+# Emulated NVIDIA GPUs
+#
+# The emulator, gpuemu, comes from the NeSI GPU workshop app
+# ({{ pins.gpuemu_repo }}), pinned to {{ pins.gpuemu_tag }}.
+# nvidia-smi, nvtop, NVML (pynvml){% if gpu.pytorch %}, torch.cuda{% endif %} and the Slurm emulator's
+# sbatch/squeue/seff all work against simulated cards. No physical GPU is
+# involved: all computation runs on the CPU, so no timing measured in this
+# image means anything about GPU performance.
+# ---------------------------------------------------------------------------
+
+# nvtop, built from source with only the NVIDIA backend: the apt package is too
+# old to have the dlopen-based NVIDIA backend the emulator's NVML relies on
+ARG NVTOP_VERSION={{ pins.nvtop }}
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        build-essential \
+        cmake \
+        htop \
+        libdrm-dev \
+        libncurses-dev \
+        pciutils \
+        time \
+    && git clone --depth 1 --branch "${NVTOP_VERSION}" https://github.com/Syllo/nvtop.git /tmp/nvtop \
+    && mkdir -p /tmp/nvtop/build \
+    && cd /tmp/nvtop/build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release \
+        -DNVIDIA_SUPPORT=ON \
+        -DAMDGPU_SUPPORT=OFF \
+        -DINTEL_SUPPORT=OFF \
+        -DMSM_SUPPORT=OFF \
+        -DPANFROST_SUPPORT=OFF \
+        -DPANTHOR_SUPPORT=OFF \
+        -DASCEND_SUPPORT=OFF \
+        -DTPU_SUPPORT=OFF \
+    && make -j"$(nproc)" \
+    && make install \
+    && cd / \
+    && rm -rf /tmp/nvtop \
+    && apt-get purge -y cmake \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# The Python side of the GPU stack.{% if gpu.pytorch %} PyTorch is the CPU build: the CUDA build is
+# far larger and could not run anyway; the emulator is what makes torch.cuda work.{% endif %}
+
+RUN {{ pip }} install nvidia-ml-py{% if gpu.numba %} numba{% endif %}{% if iface.key == "jupyter" %} jupyterlab-nvdashboard{% endif %}{% if gpu.pytorch %} \
+    && {{ pip }} install --index-url https://download.pytorch.org/whl/cpu torch torchvision{% endif +%}
+
+{% if gpu.numba %}
+# Numba's CUDA simulator runs @cuda.jit kernels in the interpreter, so learners
+# can write real CUDA kernels - threads, blocks, shared memory, syncthreads -
+# and have them run correctly, if slowly
+ENV NUMBA_ENABLE_CUDASIM=1
+
+{% endif %}
+# The emulator. Its libnvidia-ml.so.1 goes on the loader path, so everything
+# that looks for a GPU through NVML (nvtop, pynvml, ...) finds the emulated cards.
+{% include "partials/gpuemu-fetch.Dockerfile.j2" %}
+RUN mkdir -p /tmp/gpu-app \
+    && cd /tmp/gpu-app \
+    && git init -q \
+    && git fetch -q --depth 1 "${GPUEMU_REPO}" "${GPUEMU_REF}" \
+    && git checkout -q FETCH_HEAD \
+    && mkdir -p /opt/gpuemu \
+    && mv docker/gpuemu /opt/gpuemu/src \
+    && cd / \
+    && rm -rf /tmp/gpu-app \
+    && cd /opt/gpuemu/src/nvml \
+    && make PREFIX=/opt/gpuemu install \
+    && echo "/opt/gpuemu/lib" > /etc/ld.so.conf.d/gpuemu.conf \
+    && ldconfig \
+    && cd /opt/gpuemu/src \
+    && {{ pip }} install . \
+    && install -m 0755 /opt/gpuemu/src/bin/nvidia-smi /usr/local/bin/nvidia-smi \
+    && install -d /run/gpuemu /run/gpuemu/claims /run/gpuemu/slurm/jobs \
+    && chmod 1777 /run/gpuemu /run/gpuemu/claims /run/gpuemu/slurm /run/gpuemu/slurm/jobs
+
+# Check the emulator at build time rather than in front of a workshop: its own
+# test suite, the NVML shim loading and enumerating a device{% if gpu.numba %}, and a real
+# @cuda.jit kernel running in the simulator{% endif %}.
+RUN cd /opt/gpuemu/src \
+    && {{ pip }} install pytest \
+    && python3 -m pytest tests -q \
+    && gpuemud --once \
+    && nvidia-smi -L \
+    && nvidia-smi \
+    && seff -h | grep -q "Usage: seff" \
+    && python3 -c "import ctypes; l=ctypes.CDLL('libnvidia-ml.so.1'); assert l.nvmlInit_v2()==0; n=ctypes.c_uint(); assert l.nvmlDeviceGetCount_v2(ctypes.byref(n))==0; assert n.value>=1, n.value; print('NVML shim OK')" \
+{% if gpu.numba %}
+    && python3 -c "\
+import numpy as np; from numba import cuda;\
+exec('@cuda.jit\ndef add(a,b,o):\n i=cuda.grid(1)\n if i<o.size: o[i]=a[i]+b[i]\n');\
+a=np.arange(64,dtype=np.float32); b=a*2; o=np.zeros_like(a);\
+add[2,32](a,b,o);\
+assert np.allclose(o,a+b), o;\
+print('numba cudasim OK')" \
+{% endif %}
+    && {{ pip }} uninstall -y pytest \
+    && rm -rf /run/gpuemu/state.bin /opt/gpuemu/src/.pytest_cache
+
+# Claim a device automatically when a process imports torch or numba.cuda, so
+# a learner's code shows up in nvidia-smi without any boilerplate.
+ENV GPUEMU_AUTOCLAIM=1 \
+    GPUEMU_STATE_FILE=/run/gpuemu/state.bin \
+    GPUEMU_CLAIMS_DIR=/run/gpuemu/claims \
+    GPUEMU_SLURM_DIR=/run/gpuemu/slurm \
+    GPUEMU_MEM_TOTAL={{ gpu.vram }}
+
+# The node's cards, as name:memory. {% if gpu.session_form %}The launch form overrides this through
+# submit.yml.erb; this is what a session gets without it.{% else %}Every session gets these.{% endif %}
+
+ENV GPUEMU_FLEET={{ fleet }}
+
+# The autoclaim hook goes in a .pth file, not sitecustomize.py: Ubuntu ships its
+# own sitecustomize.py earlier on sys.path, which would silently shadow ours.
+RUN SITEDIR="$(python3 -c 'import gpuemu, pathlib; print(pathlib.Path(gpuemu.__file__).parent.parent)')" \
+    && printf '%s\n' \
+        'try:' \
+        '    from gpuemu.autoclaim import install as _install' \
+        '    _install()' \
+        'except Exception:' \
+        '    pass' \
+        > "${SITEDIR}/gpuemu_autostart.py" \
+    && echo 'import gpuemu_autostart' > "${SITEDIR}/zz-gpuemu-autostart.pth" \
+    && python3 -c "import sys; assert 'gpuemu_autostart' in sys.modules, 'the .pth did not run'"
+
+# A banner, so anyone who opens a terminal knows the GPUs are emulated. Being
+# quiet about that is the one genuinely harmful thing this image could do.
+COPY scripts/gpu-banner.sh /etc/profile.d/gpuemu.sh
+RUN chmod 0644 /etc/profile.d/gpuemu.sh \
+    && printf '%s\n' '' \
+        '# the emulated GPU banner, for terminals that are not login shells' \
+        '[ -r /etc/profile.d/gpuemu.sh ] && . /etc/profile.d/gpuemu.sh' \
+        >> /etc/bash.bashrc
+{% endif %}

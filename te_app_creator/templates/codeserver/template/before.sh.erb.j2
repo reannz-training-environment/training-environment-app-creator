@@ -1,0 +1,22 @@
+exec &> >(tee -a "session.log")
+
+# This script (`before.sh.erb`) is sourced directly into the main Bash script
+# that is run when the batch job starts up. It is called before the `script.sh`
+# is forked off into a separate process.
+
+# Export the module function if it exists, to avoid warnings from job_script_content.sh
+[[ $(type -t module) == "function" ]] && export -f module
+
+# setup host and port
+source /bin/find_host_port
+export host="$HOST_CFG"
+export port="$PORT_CFG"
+
+echo "host is: ${host}"
+echo "port is: ${port}"
+
+# setup password, code-server reads PASSWORD from the environment when started
+# with --auth password, and view.html.erb posts the same value to its login page
+source /bin/save_passwd_as_secret
+password=$PASSWORD
+export password PASSWORD

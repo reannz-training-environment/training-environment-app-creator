@@ -1,0 +1,15 @@
+{% if gpu.enabled and gpu.session_form %}
+
+   # The emulated GPUs, from the per-card memory controls on the form. "off"
+   # leaves a card out entirely, so asking for it is refused rather than
+   # quietly satisfied by another card. Falls back to one small card if every
+   # card is off, because a GPU session with no GPU is never what anyone meant.
+   fleet = {
+{% for card in gpu.cards %}
+     "{{ card }}" => vram_{{ card }},
+{% endfor %}
+   }.reject { |_, vram| vram.to_s.strip.empty? || vram.to_s.strip == "off" }
+    .map { |card, vram| "#{card}:#{vram}" }
+    .join(",")
+   fleet = "{{ gpu.cards[0] }}:{{ gpu.vram }}" if fleet.empty?
+{% endif %}

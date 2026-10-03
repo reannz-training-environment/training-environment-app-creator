@@ -1,0 +1,38 @@
+{% if lmod %}
+
+# ---------------------------------------------------------------------------
+# Lmod, so that `module avail` and `module load` work as they do on the cluster
+#
+# Modulefiles live in /opt/modulefiles. Login shells get `module` from
+# /etc/profile.d, other interactive shells (VS Code's terminal) from
+# /etc/bash.bashrc, and batch jobs and other scripts from BASH_ENV.
+# ---------------------------------------------------------------------------
+ARG LMOD_VERSION={{ pins.lmod }}
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        liblua5.3-dev \
+        lua-bit32 \
+        lua-filesystem \
+        lua-filesystem-dev \
+        lua-posix \
+        lua-posix-dev \
+        lua-term \
+        lua5.3 \
+        tcl \
+        tcl-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL "https://github.com/TACC/Lmod/archive/refs/tags/${LMOD_VERSION}.tar.gz" | tar -xz -C /tmp \
+    && cd "/tmp/Lmod-${LMOD_VERSION}" \
+    && ./configure --prefix=/opt \
+    && make install \
+    && cd / \
+    && rm -rf "/tmp/Lmod-${LMOD_VERSION}" \
+    && ln -s /opt/lmod/lmod/init/profile /etc/profile.d/z00_lmod.sh \
+    && mkdir -p /opt/modulefiles \
+    && printf '%s\n' '' \
+        '# Lmod, for interactive shells that are not login shells (e.g. VS Code terminals)' \
+        'if ! type module > /dev/null 2>&1; then . /opt/lmod/lmod/init/bash; fi' \
+        >> /etc/bash.bashrc
+
+ENV MODULEPATH=/opt/modulefiles \
+    BASH_ENV=/opt/lmod/lmod/init/bash
+{% endif %}

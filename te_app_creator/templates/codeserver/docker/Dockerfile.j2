@@ -1,0 +1,41 @@
+{% include "partials/header.Dockerfile.j2" %}
+
+FROM ubuntu:{{ pins.ubuntu }}
+
+{% include "partials/system-ubuntu.Dockerfile.j2" %}
+
+{% include "partials/ood-k8s.Dockerfile.j2" %}
+
+# install code-server: VS Code in the browser
+ARG CODE_RELEASE={{ pins.code_server }}
+RUN mkdir -p /app/code-server \
+    && curl -fsSL -o /tmp/code-server.tar.gz \
+        "https://github.com/coder/code-server/releases/download/v${CODE_RELEASE}/code-server-${CODE_RELEASE}-linux-amd64.tar.gz" \
+    && tar xf /tmp/code-server.tar.gz -C /app/code-server --strip-components=1 \
+    && rm -f /tmp/code-server.tar.gz \
+    && ln -s /app/code-server/bin/code-server /usr/local/bin/code-server
+{% if extensions %}
+
+# VS Code extensions requested in the app spec, from Open VSX. They go in with
+# VS Code's built-in extensions, so every learner has them without installing
+# anything, and learners can still add their own.
+RUN code-server --extensions-dir /app/code-server/lib/vscode/extensions \
+{% for extension in extensions %}
+        --install-extension {{ extension }} \
+{% endfor %}
+    && rm -f /app/code-server/lib/vscode/extensions/extensions.json
+{% endif %}
+{% include "partials/apt.Dockerfile.j2" %}
+{% include "partials/lmod.Dockerfile.j2" %}
+{% include "partials/gpu.Dockerfile.j2" %}
+{% include "partials/slurm.Dockerfile.j2" %}
+{% include "partials/conda.Dockerfile.j2" %}
+{% if pip_packages %}
+
+# Python packages requested in the app spec (docker/requirements.txt)
+COPY requirements.txt /opt/app-creator/requirements.txt
+RUN {{ pip }} install -r /opt/app-creator/requirements.txt
+{% endif %}
+{% include "partials/data.Dockerfile.j2" %}
+{% include "partials/custom.Dockerfile.j2" %}
+{% include "partials/smoke-test.Dockerfile.j2" %}

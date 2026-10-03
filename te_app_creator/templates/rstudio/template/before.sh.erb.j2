@@ -1,0 +1,20 @@
+exec &> >(tee -a "pod.log")
+
+# Export the module function if it exists, to avoid warnings from job_script_content.sh
+[[ $(type -t module) == "function" ]] && export -f module
+
+source /bin/find_host_port
+source /bin/save_passwd_as_secret
+export password="$PASSWORD"
+export host="$HOST_CFG"
+export port="$PORT_CFG"
+
+echo "host is: ${host}"
+echo "port is: ${port}"
+
+# rstudio 1.4+ needs a csrf token
+export csrf_token=<%= SecureRandom.uuid %>
+echo "csrf_token is: ${csrf_token}"
+/bin/bash /opt/open_ondemand/helpers/k8_helper csrf_token "$csrf_token"
+
+export RSTUDIO_PASSWORD="${password}"

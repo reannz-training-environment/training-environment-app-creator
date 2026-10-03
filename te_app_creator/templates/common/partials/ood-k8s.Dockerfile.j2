@@ -1,0 +1,24 @@
+# install kubectl, required for running on the k8s cluster
+ARG KUBECTL_VERSION={{ pins.kubectl }}
+RUN curl -fsSLO https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl \
+    && mv kubectl /usr/local/bin/kubectl \
+    && chmod +x /usr/local/bin/kubectl
+
+# copy in ood k8s utils
+# template/before.sh.erb sources find_host_port, save_passwd_as_secret and
+# create_salt_and_sha1 from here to set up the connection details, so the app
+# will not connect without them
+ARG UTILS_HASH={{ pins.k8s_utils_hash }}
+RUN git clone {{ pins.k8s_utils_repo }} /opt/ood-k8s-utils \
+    && cd /opt/ood-k8s-utils \
+    && git checkout $UTILS_HASH \
+    && chmod +x /opt/ood-k8s-utils/files/* \
+    && mv /opt/ood-k8s-utils/files/* /bin/ \
+    && rm -rf /opt/ood-k8s-utils
+{% if not lmod %}
+
+# make a dummy module command to avoid warnings from ondemand job_script_content.sh;
+# this app has no environment modules, everything is already on PATH
+RUN printf '%s\n' '#!/bin/bash' '# No modules in this app - all software is already on PATH.' 'exit 0' > /bin/module \
+    && chmod +x /bin/module
+{% endif %}

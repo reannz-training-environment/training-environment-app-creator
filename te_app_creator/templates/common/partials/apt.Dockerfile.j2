@@ -1,0 +1,9 @@
+{% if apt_packages %}
+
+# system packages requested in the app spec
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+{% for package in apt_packages %}
+        {{ package }} \
+{% endfor %}
+    && rm -rf /var/lib/apt/lists/*
+{% endif %}

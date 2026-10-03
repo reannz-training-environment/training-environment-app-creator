@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/reannz-training-environment/training-environment-app-creator/schema/app.schema.json",
+  "title": "Training environment app",
+  "description": "One file in apps/ describes one app. Each interface listed creates its own repository, training-environment-<interface>-<name>-app.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "title", "interfaces"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "name": {
+      "description": "Short name used in repository and image names. Lower case letters, digits and single hyphens; no underscores, which GitHub packages do not allow.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+      "minLength": 2,
+      "maxLength": 40
+    },
+    "title": {
+      "description": "Name shown on the Open OnDemand dashboard. The interface is added in brackets, e.g. 'Intro to Python (JupyterLab)'.",
+      "type": "string",
+      "pattern": "^[^\\n\\r]+$",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "version": {
+      "description": "Version of the app. The image is tagged v<version>; bump it to release a change.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "visibility": {
+      "description": "Repository visibility. Keep public unless the cluster has credentials for ghcr.io: the image of a private repository is private too.",
+      "enum": ["public", "private"]
+    },
+    "maintainers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$"
+      },
+      "uniqueItems": true
+    },
+    "workshop_url": {
+      "type": "string",
+      "pattern": "^https?://[^\\s\"'`$\\\\]+$"
+    },
+    "interfaces": {
+      "type": "array",
+      "items": {
+        "enum": ["jupyter", "rstudio", "codeserver"]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu": {"type": "integer", "minimum": 1, "maximum": 32},
+        "memory_gb": {"type": "integer", "minimum": 1, "maximum": 256},
+        "wall_time_hours": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default": {"type": "integer", "minimum": 1, "maximum": 168},
+            "min": {"type": "integer", "minimum": 1, "maximum": 168},
+            "max": {"type": "integer", "minimum": 1, "maximum": 168}
+          }
+        }
+      }
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gpu": {
+          "description": "Emulated NVIDIA GPUs (no physical GPU). Turning this on also turns on the Slurm emulator, which is how a GPU is requested.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "cards": {
+              "type": "array",
+              "items": {"enum": ["l4", "a100_40", "a100", "h100", "pro_6000"]},
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "vram": {
+              "description": "Memory each emulated card reports. Small cards make out-of-memory errors cheap to teach; 'full' reports the real board size.",
+              "enum": ["100MiB", "200MiB", "512MiB", "1GiB", "2GiB", "4GiB", "full"]
+            },
+            "pytorch": {"type": "boolean"},
+            "numba": {"type": "boolean"},
+            "session_form": {
+              "description": "Show one GPU memory control per card on the launch form, as the GPU workshop app does.",
+              "type": "boolean"
+            }
+          }
+        },
+        "slurm": {
+          "description": "A single-node Slurm emulator inside the session: sbatch, squeue, scancel, sinfo, sacct, scontrol, srun and seff.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "partition": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,30}$"},
+            "node_name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,30}$"}
+          }
+        },
+        "lmod": {
+          "description": "Lmod environment modules. Conda software becomes 'module load <name>' instead of being on PATH.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "software": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apt": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]*(=[A-Za-z0-9.+:~-]+)?$"},
+          "uniqueItems": true
+        },
+        "pip": {
+          "description": "Lines of a pip requirements file.",
+          "type": "array",
+          "items": {"type": "string", "pattern": "^(?:[A-Za-z0-9][^\\n\\r]{0,199}|git\\+https://[^\\s]{1,200})$"},
+          "uniqueItems": true
+        },
+        "conda": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "channels": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
+              "uniqueItems": true
+            },
+            "packages": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^(?:[A-Za-z0-9_.-]+::)?[A-Za-z0-9][A-Za-z0-9_.-]*(?: ?(?:==?|>=?|<=?|!=|~=) ?[A-Za-z0-9_.*+!]+(?:=[A-Za-z0-9_.*+]+)?(?: ?, ?(?:==?|>=?|<=?|!=|~=) ?[A-Za-z0-9_.*+!]+)*)?$"},
+              "uniqueItems": true
+            }
+          }
+        },
+        "r": {
+          "description": "R packages, installed in the RStudio app only.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cran": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9.]*$"},
+              "uniqueItems": true
+            },
+            "bioconductor": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9.]*$"},
+              "uniqueItems": true
+            },
+            "github": {
+              "type": "array",
+              "items": {"type": "string", "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._/-]+)?(?:@[A-Za-z0-9._/-]+)?$"},
+              "uniqueItems": true
+            }
+          }
+        },
+        "vscode_extensions": {
+          "description": "Open VSX extension ids, e.g. ms-python.python, installed in the VS Code app only.",
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*\\.[A-Za-z0-9][A-Za-z0-9-]*(?:@[0-9][A-Za-z0-9.+-]*)?$"},
+          "uniqueItems": true
+        }
+      }
+    },
+    "data": {
+      "description": "Files baked into the image and copied into each learner's home directory when a session starts. Existing files are never overwritten.",
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "repo"],
+            "properties": {
+              "type": {"const": "github"},
+              "repo": {"type": "string", "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"},
+              "ref": {"type": "string", "pattern": "^[A-Za-z0-9._/-]{1,100}$"},
+              "path": {"type": "string", "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"},
+              "dest": {"type": "string", "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"}
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "url"],
+            "properties": {
+              "type": {"const": "url"},
+              "url": {"type": "string", "pattern": "^https?://[A-Za-z0-9._~:/?#\\[\\]@!&'()*+,;=%-]+$"},
+              "extract": {"type": "boolean"},
+              "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "dest": {"type": "string", "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"}
+            }
+          }
+        ]
+      }
+    },
+    "advanced": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start_dir": {
+          "description": "Folder, relative to the home directory, that VS Code opens.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+        },
+        "rstudio_image": {
+          "enum": ["rocker/rstudio", "rocker/tidyverse", "rocker/verse", "rocker/geospatial"]
+        },
+        "r_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "dockerfile": {
+          "description": "Extra Dockerfile instructions, added to every image after the software is installed.",
+          "type": "string",
+          "maxLength": 20000
+        },
+        "startup": {
+          "description": "Extra bash run in the session, in the home directory, just before the interface starts.",
+          "type": "string",
+          "maxLength": 20000
+        }
+      }
+    }
+  }
+}

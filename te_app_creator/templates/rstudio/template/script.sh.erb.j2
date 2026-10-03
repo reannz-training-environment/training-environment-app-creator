@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+
+#
+# Start RStudio Server
+#
+# PAM auth helper used by RStudio
+export WORKING_DIR="<%= session.staged_root %>"
+export RSTUDIO_AUTH="$WORKING_DIR/bin/auth"
+
+export PATH="$PATH:/usr/lib/rstudio-server/bin"
+
+# RStudioServer doesn't inherit "ulimit -s" from system config /etc/security/limits.d/custom.conf
+# Therefore, we are setting it here
+ulimit -s unlimited
+{% if rsession_env %}
+
+# rsession does not inherit this script's environment, so save the variables
+# this app's emulators, modules and software need, for the rsession wrapper to
+# load. Terminals opened in RStudio inherit them from rsession.
+export -p | grep -E '^declare -x (BASH_ENV|MODULEPATH|MODULEPATH_ROOT|LMOD_[A-Za-z0-9_]*|GPUEMU_[A-Z0-9_]*|SLURM_EMU_[A-Z0-9_]*|NUMBA_[A-Z0-9_]*|MAMBA_ROOT_PREFIX)=' \
+    > "$WORKING_DIR/rsession-env.sh" || true
+{% endif %}
+
+# Generate an `rsession` wrapper script
+export RSESSION_WRAPPER_FILE="$WORKING_DIR/rsession.sh"
+(
+umask 077
+sed 's/^ \{2\}//' > "$WORKING_DIR/rsession.sh" << EOL
+  #!/usr/bin/env bash
+
+  # Log all output from this script
+  export RSESSION_LOG_FILE="$WORKING_DIR/rsession.log"
+
+  exec &>>"\${RSESSION_LOG_FILE}"
+
+  # rsession.sh doesn't share the same env as the outside script, so these
+  # need to be set explicitly
+  export TZ="{{ defaults.timezone }}"
+  export PATH="/usr/local/bin:$PATH"
+{% if rsession_env %}
+  . "$WORKING_DIR/rsession-env.sh"
+{% endif %}
+
+  #This is to resolve issue : https://github.com/nesi/nesi-ood-rstudio-server-app/issues/13
+  if [ ! -f ~/.inputrc ] || ! grep -qF 'set enable-bracketed-paste off' ~/.inputrc; then
+      echo 'set enable-bracketed-paste off' >> ~/.inputrc
+  fi
+
+  # Launch the original command
+  echo "Launching rsession..."
+  set -x
+  exec rsession "\${@}"
+EOL
+)
+chmod 700 "$WORKING_DIR/rsession.sh"
+mkdir -p "$WORKING_DIR/logs"
+mkdir -p /tmp/rserver-run
+
+cd $HOME
+
+set -x
+{% include "snippets/session-start.sh.j2" %}
+
+echo "Starting up rserver..."
+
+# launch rserver
+rserver \
+    --www-port=8080 \
+    --auth-none=0 \
+    --auth-pam-helper-path="${RSTUDIO_AUTH}" \
+    --auth-encrypt-password=0 \
+    --auth-timeout-minutes=0 \
+    --database-config-file='/etc/rstudio/database/database.conf' \
+    --server-data-dir='/tmp/rserver-run' \
+    --server-daemonize=0 \
+    --server-user=$(whoami) \
+    --rsession-path "${RSESSION_WRAPPER_FILE}" \
+    --server-app-armor-enabled=0
