@@ -195,6 +195,8 @@ def _plan(ctx: dict[str, Any]) -> list[tuple[str, str, int]]:
 def _generated(ctx: dict[str, Any]) -> list[OutputFile]:
     """Files written straight from the spec rather than from a template."""
     out = []
+    if ctx["apt_packages"]:
+        out.append(OutputFile("docker/apt-packages.txt", ("\n".join(ctx["apt_packages"]) + "\n").encode()))
     if ctx["pip_packages"]:
         text = "# Python packages requested in the app spec\n" + "\n".join(ctx["pip_packages"]) + "\n"
         out.append(OutputFile("docker/requirements.txt", text.encode()))

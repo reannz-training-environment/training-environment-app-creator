@@ -6,7 +6,8 @@
 # * when the generator, its templates or its config change, the examples are
 #   built instead, since every app is affected
 #
-# It comments on the pull request with what merging it will create or update.
+# It comments on the pull request with what merging it will create or update,
+# then, once the images are built, with how much space each of them needs.
 name: Validate
 
 on:
@@ -31,6 +32,7 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       app_specs: ${{ steps.plan.outputs.app_specs }}
+      build_specs: ${{ steps.plan.outputs.build_specs }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -70,6 +72,7 @@ jobs:
           fi
           build_specs=$(echo ${build_specs} | xargs -n1 | sort -u | xargs)
           echo "app_specs=${app_specs}" >> "$GITHUB_OUTPUT"
+          echo "build_specs=${build_specs}" >> "$GITHUB_OUTPUT"
           if [ -n "${build_specs}" ]; then
             echo "matrix=$(python -m te_app_creator matrix ${build_specs})" >> "$GITHUB_OUTPUT"
           else
@@ -79,19 +82,17 @@ jobs:
           echo "images to build: ${build_specs:-none}"
 
       - name: Summarise
-        id: summary
         if: steps.plan.outputs.app_specs != ''
         env:
           GH_TOKEN: ${{ github.token }}
           SPECS: ${{ steps.plan.outputs.app_specs }}
         run: |
           {
-            echo "<!-- app-creator-summary -->"
             echo "## What merging this pull request does"
             echo
             python -m te_app_creator summary ${SPECS} || true
             echo
-            echo "Each image is test-built by this workflow before merging; see the checks below."
+            echo "Each image is being test-built; this comment will then say how much space it needs."
           } > summary.md
           cat summary.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -100,14 +101,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
-        run: |
-          existing=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
-            --jq '[.[] | select(.body | startswith("<!-- app-creator-summary -->"))][0].id // empty')
-          if [ -n "${existing}" ]; then
-            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" -F body=@summary.md > /dev/null
-          else
-            gh pr comment "${PR}" --body-file summary.md
-          fi
+        run: python -m te_app_creator comment --pr "${PR}" --file summary.md
 
   build:
     needs: check
@@ -149,11 +143,70 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      # not pushed: the app's own repository builds and pushes its image
+      # not pushed: the app's own repository builds and pushes its image. It is
+      # loaded into the runner's docker, to measure it.
       - name: Build the image, which runs its smoke test
         uses: docker/build-push-action@v7
         with:
           context: build/${{ matrix.app.repo }}/docker
           push: false
+          load: true
+          tags: app-creator-ci/${{ matrix.app.repo }}:test
           cache-from: type=gha,scope=${{ matrix.app.repo }}
           cache-to: type=gha,mode=max,scope=${{ matrix.app.repo }}
+
+      - name: Measure the space it needs
+        env:
+          SPEC: ${{ matrix.app.spec }}
+          INTERFACE: ${{ matrix.app.interface }}
+          REPO: ${{ matrix.app.repo }}
+        run: |
+          python -m te_app_creator sizes "${SPEC}" -i "${INTERFACE}" \
+            --image "app-creator-ci/${REPO}:test" --json "sizes/${REPO}.json" >> "$GITHUB_STEP_SUMMARY"
+          cat "sizes/${REPO}.json"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sizes-${{ matrix.app.repo }}
+          path: sizes/
+
+  # Once every image is built (or has failed to), says how much space each
+  # needs: on the pull request, and in the run's summary.
+  report:
+    needs: [check, build]
+    if: always() && needs.check.result == 'success' && needs.check.outputs.matrix != '[]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: sizes-*
+          merge-multiple: true
+          path: sizes
+
+      - name: Sizes in the run summary
+        env:
+          SPECS: ${{ needs.check.outputs.build_specs }}
+        run: |
+          mkdir -p sizes
+          python -m te_app_creator summary ${SPECS} --sizes sizes >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Sizes on the pull request
+        if: needs.check.outputs.app_specs != '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          SPECS: ${{ needs.check.outputs.app_specs }}
+        run: |
+          {
+            echo "## What merging this pull request does"
+            echo
+            python -m te_app_creator summary ${SPECS} --sizes sizes || true
+            echo
+            echo "Every image was test-built by this workflow; see the checks below."
+          } > summary.md
+          python -m te_app_creator comment --pr "${PR}" --file summary.md

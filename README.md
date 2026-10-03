@@ -41,7 +41,8 @@ flowchart LR
    website), it opens the pull request itself.
 2. The **Validate** workflow tests the spec, builds the image of every
    interface (each image runs a smoke test of every feature it has), and
-   comments with the repositories that merging will create or update.
+   comments with the repositories that merging will create or update, and
+   [how much space each needs](#how-much-space-an-app-needs).
 3. Merge. The **Publish** workflow creates the repositories and comments with
    links to them. Each new repository's own workflows release `v<version>` and
    push its image, which takes a few minutes.
@@ -87,6 +88,27 @@ The full list is [`schema/app.schema.json`](schema/app.schema.json); the
 | `data` | GitHub repositories (at a branch, tag or commit, optionally one folder) and downloads (unpacked if they are archives), baked into the image and copied into each learner's home directory when a session starts. Existing files are never overwritten |
 | `resources` | CPUs, memory and the wall time range of a session |
 | `advanced.dockerfile`, `advanced.startup` | Extra Dockerfile instructions, and extra commands run at session start. Reviewers should read these |
+
+## How much space an app needs
+
+An app needs space in two places:
+
+* **Its image**, on every worker node that runs it: the programs, and a copy of
+  the data. The training environment's `worker_disksize` has to hold the
+  images of every app that is pre-pulled.
+* **Its data**, in every learner's home directory: each session copies the
+  data in, so the home directory server needs the data's size once per learner.
+
+The website estimates both while the app is described. Data from a GitHub
+repository is sized exactly from the repository's files at the chosen ref, and
+a download from a GitHub release from the release; software is estimated from
+typical sizes measured on real builds.
+
+The Validate workflow then measures every image it builds
+(`python -m te_app_creator sizes`), and the pull request comment gives the
+image's download and on-disk size, the data each learner gets, and what each
+part of the app adds: every data source, and every kind of software. Each of
+those is its own Dockerfile step, so this comes from the image's layer history.
 
 ## One-time setup
 

@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 from . import publish as publisher
-from . import render
+from . import render, sizes
 from .spec import INTERFACES, ROOT, Spec, SpecError, load, load_defaults, load_schema
 
 
@@ -180,12 +180,70 @@ def cmd_summary(args) -> int:
         for warning in spec.warnings:
             out.append(f"* :warning: {warning}")
         out.append("")
+        if args.sizes:
+            out.extend(_sizes_section(spec, defaults, Path(args.sizes)))
     for exc in errors:
         out.append(f"### :x: `{exc.path}`")
         out.extend(f"* {m}" for m in exc.errors)
         out.append("")
     print("\n".join(out))
     return 1 if errors else 0
+
+
+def _sizes_section(spec: Spec, defaults: dict, directory: Path) -> list[str]:
+    """The measured sizes of each of the app's images, from `sizes --json` files."""
+    out = ["#### Space needed", ""]
+    data_bytes = 0
+    for interface in spec.app["interfaces"]:
+        name = render.repo_name(defaults, interface, spec.name)
+        path = directory / f"{name}.json"
+        if not path.is_file():
+            out += [f"**{INTERFACES[interface]['label']}**: not measured, the image did not build", ""]
+            continue
+        report = json.loads(path.read_text(encoding="utf-8"))
+        data_bytes = max(data_bytes, report["data_bytes"])
+        out.append(sizes.markdown(report))
+    if data_bytes:
+        out += [
+            f"Every learner gets their own copy of the data, so the home directories need "
+            f"{sizes.human(data_bytes)} for each learner: {sizes.human(30 * data_bytes)} for 30.",
+            "",
+        ]
+    return out
+
+
+def cmd_sizes(args) -> int:
+    defaults = load_defaults()
+    spec = load(args.spec, load_schema(), defaults)
+    report = sizes.measure(args.image, spec, args.interface, defaults, download=not args.no_download)
+    if args.json:
+        Path(args.json).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.json).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(sizes.markdown(report))
+    return 0
+
+
+MARKER = "<!-- app-creator-summary -->"
+
+
+def cmd_comment(args) -> int:
+    """Create the pull request's summary comment, or replace the one already there."""
+    token = _token()
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not token or not repo:
+        print("comment needs GH_TOKEN (or GITHUB_TOKEN) and GITHUB_REPOSITORY", file=sys.stderr)
+        return 1
+    body = Path(args.file).read_text(encoding="utf-8")
+    if not body.startswith(MARKER):
+        body = f"{MARKER}\n{body}"
+    gh = publisher.GitHub(token)
+    comments = gh.call("GET", f"/repos/{repo}/issues/{args.pr}/comments?per_page=100")
+    mine = [c for c in comments if (c.get("body") or "").startswith(MARKER)]
+    if mine:
+        gh.call("PATCH", f"/repos/{repo}/issues/comments/{mine[0]['id']}", {"body": body})
+    else:
+        gh.call("POST", f"/repos/{repo}/issues/{args.pr}/comments", {"body": body})
+    return 0
 
 
 def cmd_publish(args) -> int:
@@ -298,7 +356,21 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("summary", help="Markdown summary of specs")
     p.add_argument("specs", nargs="*")
+    p.add_argument("--sizes", help="directory of `sizes --json` reports to include")
     p.set_defaults(func=cmd_summary)
+
+    p = sub.add_parser("sizes", help="measure a built image of an app")
+    p.add_argument("spec")
+    p.add_argument("-i", "--interface", required=True, choices=list(INTERFACES))
+    p.add_argument("--image", required=True, help="the built image, in the local docker")
+    p.add_argument("--json", help="also write the report as JSON to this file")
+    p.add_argument("--no-download", action="store_true", help="skip estimating the compressed download size")
+    p.set_defaults(func=cmd_sizes)
+
+    p = sub.add_parser("comment", help="create or update the pull request's summary comment")
+    p.add_argument("--pr", required=True, type=int)
+    p.add_argument("--file", required=True)
+    p.set_defaults(func=cmd_comment)
 
     p = sub.add_parser("publish", help="create or update the app repositories")
     p.add_argument("specs", nargs="+")
