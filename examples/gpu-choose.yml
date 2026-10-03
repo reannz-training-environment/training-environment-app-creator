@@ -1,0 +1,18 @@
+# One emulated GPU per session: the learner chooses which card from a menu on
+# the launch form. Without PyTorch or Numba, for a quick build.
+schema_version: 1
+name: gpu-choose
+title: Choose a GPU
+description: Each session has one emulated GPU, which the learner picks on the launch form.
+version: 0.1.0
+
+interfaces: [jupyter]
+
+features:
+  gpu:
+    enabled: true
+    mode: choose
+    cards: [l4, a100, h100]
+    vram: 512MiB
+    pytorch: false
+    numba: false

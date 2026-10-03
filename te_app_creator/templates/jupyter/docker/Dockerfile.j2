@@ -9,6 +9,7 @@ FROM ubuntu:{{ pins.ubuntu }}
 {% include "partials/lmod.Dockerfile.j2" %}
 {% include "partials/gpu.Dockerfile.j2" %}
 {% include "partials/slurm.Dockerfile.j2" %}
+{% include "partials/nesi-tools.Dockerfile.j2" %}
 {% include "partials/conda.Dockerfile.j2" %}
 
 # install JupyterLab{% if pip_packages %}, with the Python packages requested in the app spec

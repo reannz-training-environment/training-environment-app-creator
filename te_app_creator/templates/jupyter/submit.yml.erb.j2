@@ -27,7 +27,7 @@ script:
         LOG_DIR: "<%= staged_root %>"
         SHELL: "/bin/bash"
         TZ: "{{ defaults.timezone }}"
-{% if gpu.enabled and gpu.session_form %}
+{% if fleet_from_form %}
         # the session's GPUs, as name:memory entries; read by gpuemud at
         # startup and by sbatch to decide whether a requested card exists
         GPUEMU_FLEET: "<%= fleet %>"

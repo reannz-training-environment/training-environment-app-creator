@@ -109,7 +109,11 @@ def _features(app: dict) -> str:
     parts = []
     if gpu["enabled"]:
         cards = ", ".join(f"`{c}`" for c in gpu["cards"])
-        parts.append(f"emulated GPUs ({cards}, {gpu['vram']} each{', PyTorch' if gpu['pytorch'] else ''})")
+        torch = ", PyTorch" if gpu["pytorch"] else ""
+        if gpu["mode"] == "choose":
+            parts.append(f"one emulated GPU per session, chosen from {cards} ({gpu['vram']}{torch})")
+        else:
+            parts.append(f"emulated GPUs ({cards}, {gpu['vram']} each{torch})")
     if slurm["enabled"]:
         parts.append(f"Slurm emulator (partition `{slurm['partition']}`)")
     if lmod["enabled"]:
@@ -254,12 +258,21 @@ def _report_markdown(results: list[publisher.Result], dry_run: bool) -> str:
         if r.action == "updated":
             result = f"[{result}]({r.url})"
         lines.append(f"| {link} | {INTERFACES[r.interface]['label']} | {result} | {r.detail} |")
-    if any(r.action == "created" for r in results):
+    created = [r for r in results if r.action == "created"]
+    if created:
         lines += [
             "",
             "Each new repository releases its first version and pushes its image to ghcr.io from its "
-            "own workflows, which takes a few minutes. Its README has the `ood_apps` block that adds "
-            "it to the training environment.",
+            "own workflows, which takes a few minutes. Then, once per app, **make its image public**, "
+            "since new packages are private and the training environment pulls without credentials:",
+            "",
+        ]
+        for r in created:
+            org, name = r.repo.split("/")
+            lines.append(f"* [`{name}` package settings](https://github.com/orgs/{org}/packages/container/{name}/settings): *Change visibility*")
+        lines += [
+            "",
+            "Each repository's README has the `ood_apps` block that adds it to the training environment.",
         ]
     return "\n".join(lines) + "\n"
 

@@ -84,6 +84,10 @@
           "additionalProperties": false,
           "properties": {
             "enabled": {"type": "boolean"},
+            "mode": {
+              "description": "'all': every card in 'cards' is on the session's node at once. 'choose': the node has one GPU, which the learner picks from 'cards' in a menu on the launch form.",
+              "enum": ["all", "choose"]
+            },
             "cards": {
               "type": "array",
               "items": {"enum": ["l4", "a100_40", "a100", "h100", "pro_6000"]},
@@ -97,19 +101,27 @@
             "pytorch": {"type": "boolean"},
             "numba": {"type": "boolean"},
             "session_form": {
-              "description": "Show one GPU memory control per card on the launch form, as the GPU workshop app does.",
+              "description": "Let learners set GPU memory on the launch form: one control per card in 'all' mode, as the GPU workshop app does, or one for the chosen card in 'choose' mode.",
               "type": "boolean"
             }
           }
         },
         "slurm": {
-          "description": "A single-node Slurm emulator inside the session: sbatch, squeue, scancel, sinfo, sacct, scontrol, srun and seff.",
+          "description": "A single-node Slurm emulator inside the session: sbatch, squeue, scancel, sinfo, sacct, scontrol and srun, with NeSI's own seff and svisit from nesi/opt-nesi-bin.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "enabled": {"type": "boolean"},
-            "partition": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,30}$"},
-            "node_name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,30}$"}
+            "partition": {
+              "description": "Partition of the CPU node, when there are no emulated GPUs. Default milan.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,30}$"
+            },
+            "node_name": {
+              "description": "Name of the CPU node, when there are no emulated GPUs. Default c001; NeSI's svisit recognises names of one or two letters and two or three digits.",
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,30}$"
+            }
           }
         },
         "lmod": {

@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: form.yml and manifest.yml must parse the way OnDemand parses them
         run: |
           ruby -ryaml -e '
@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: template scripts must be executable
         run: |
           fail=0
@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: submit.yml.erb must pin this release's tag
         run: |
           image="${REGISTRY}/${GITHUB_REPOSITORY,,}"
@@ -97,22 +97,22 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Log in to the Container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: docker
           push: true
@@ -120,3 +120,18 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # A new package on ghcr.io is private, whatever the repository is, and
+      # there is no API to change that. The training environment pulls images
+      # without credentials, so it can only use a public one.
+      - name: The image must be public for the training environment to pull it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name="${GITHUB_REPOSITORY#*/}"
+          settings="https://github.com/orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${name}/settings"
+          visibility=$(gh api "orgs/${GITHUB_REPOSITORY_OWNER}/packages/container/${name}" --jq .visibility 2> /dev/null || echo unknown)
+          if [ "${visibility}" = "public" ]; then
+            echo "ok: the image is public"
+          else
+            echo "::warning::The image is ${visibility}, and the training environment can only pull public images. Make it public once, at ${settings} (Danger Zone, Change visibility)."
+          fi

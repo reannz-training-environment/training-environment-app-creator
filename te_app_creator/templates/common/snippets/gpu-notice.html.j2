@@ -1,7 +1,7 @@
 {% if gpu.enabled %}
 <p class="help-block" style="margin-top: 0.75em">
   <i class="fa fa-info-circle"></i>
-  This session uses <strong>emulated GPUs</strong>. <code>nvidia-smi</code>,
+  This session uses {% if gpu_choose %}an <strong>emulated GPU</strong>{% else %}<strong>emulated GPUs</strong>{% endif %}. <code>nvidia-smi</code>,
   <code>nvtop</code>{% if gpu.pytorch %}, <code>sbatch</code> and <code>torch.cuda</code>{% else %} and <code>sbatch</code>{% endif %} all work,
   but all computation runs on the CPU &mdash; timings are not GPU timings.
 </p>

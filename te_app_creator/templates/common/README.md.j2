@@ -31,7 +31,7 @@ The same workshop environment is also available as:
 | Image | `{{ image }}:{{ image_tag }}` |
 | Session | {{ app.resources.cpu }} CPUs, {{ app.resources.memory_gb }} GB memory, {{ app.resources.wall_time_hours.default }} hours by default ({{ app.resources.wall_time_hours.min }}-{{ app.resources.wall_time_hours.max }}) |
 {% if gpu.enabled %}
-| Emulated GPUs | {% for card in gpu.cards %}`{{ card }}`{% if not loop.last %}, {% endif %}{% endfor %} with {{ gpu.vram }} each{% if gpu.pytorch %}; PyTorch (CPU build) sees them through `torch.cuda`{% endif %}{% if gpu.numba %}; Numba's CUDA simulator is on{% endif %} |
+| Emulated GPUs | {% if gpu_choose %}one per session, chosen on the launch form from {% endif %}{% for card in gpu.cards %}`{{ card }}`{% if not loop.last %}, {% endif %}{% endfor %} with {{ gpu.vram }}{% if not gpu_choose %} each{% endif %}{% if gpu.pytorch %}; PyTorch (CPU build) sees {% if gpu_choose %}it{% else %}them{% endif %} through `torch.cuda`{% endif %}{% if gpu.numba %}; Numba's CUDA simulator is on{% endif %} |
 {% endif %}
 {% if slurm.enabled %}
 | Slurm | single-node emulator: partition `{{ slurm.partition }}`, node `{{ slurm.node_name }}` |
@@ -86,19 +86,36 @@ limits, but all computation runs on the CPU. **No timing measured in this
 environment means anything about GPU performance**; the session banner, the
 connect button and this README all say so, and should keep saying so.
 
-Request a GPU in a batch job as on the cluster, e.g. `#SBATCH --gpus-per-node={{ gpu.cards[0] }}:1`.
-A job that does not ask for a GPU cannot see one. `sinfo -l` lists the cards.
+{% if gpu_choose %}
+Each session has one GPU, which the learner chooses on the launch form from
+{% for card in gpu.cards %}`{{ card }}`{% if not loop.last %}, {% endif %}{% endfor %}.
 {% if gpu.session_form %}
-The launch form has one GPU memory control per card, which can also take a
-card off the node.
+The form also sets how much memory it reports.
 {% endif %}
+{% else %}
+Each session's node has every one of these cards:
+{% for card in gpu.cards %}`{{ card }}`{% if not loop.last %}, {% endif %}{% endfor %}.
+{% if gpu.session_form %}
+The launch form has one memory control per card, which can also take a card
+off the node.
+{% endif %}
+{% endif %}
+
+Request a GPU in a batch job as on the cluster, e.g. `#SBATCH --gpus-per-node={{ gpu.cards[0] }}:1`.
+A job that does not ask for a GPU cannot see one, and a job that asks for a
+card the node does not have is refused. `sinfo -l` lists the node's cards.
+`seff` and `svisit` are NeSI's own, from
+[nesi/opt-nesi-bin](https://github.com/nesi/opt-nesi-bin): `svisit <jobid>`
+opens a shell inside a running job, where `nvtop` shows its GPU, and `seff`
+reports a finished job's GPU memory against the real board's size, as it does
+on the cluster, even when the emulated card is smaller.
 See the GPU app's README for what the emulator can and cannot teach.
 {% elif slurm.enabled %}
 
 ### Slurm emulator
 
-`sbatch`, `squeue`, `scancel`, `sinfo`, `sacct`, `scontrol show job`, `srun`
-and `seff` work against a single-node queue inside the session: partition
+`sbatch`, `squeue`, `scancel`, `sinfo`, `sacct`, `scontrol show job` and
+`srun` work against a single-node queue inside the session: partition
 `{{ slurm.partition }}`, node `{{ slurm.node_name }}`, with the session's CPUs
 and memory. It is the scheduler of the NeSI
 [GPU workshop app](https://github.com/nesi/training-environment-jupyter-gpu-app)
@@ -106,6 +123,13 @@ and memory. It is the scheduler of the NeSI
 It is a teaching scaffold, not Slurm: one node, first come first served, and
 jobs run as the learner inside the session. `slurm-emulator status` checks it,
 `slurm-emulator restart` restarts it if jobs stay PENDING.
+
+`seff` and `svisit` are NeSI's own, from
+[nesi/opt-nesi-bin](https://github.com/nesi/opt-nesi-bin), as on the cluster:
+`seff <jobid>` reports how much of its allocation a finished job used, and
+`svisit <jobid>` opens a shell inside a running job.
+`docker/scripts/slurm-nesi-tools.py` teaches the emulator the `sacct --json`,
+`squeue --Format` and `srun --jobid` they use.
 
 Jobs start with the session's environment, not the environment `sbatch` was
 run from, so load modules inside the job script rather than before `sbatch`.
@@ -133,7 +157,14 @@ commands has a wrapper in `/opt/software/bin`, which is at the end of `PATH`.
 
 ## Adding the app to the training environment
 
-Add this block to `ood_apps` in `vars/ondemand-config.yml` of the
+The cluster pulls the image without credentials, so it must be public. A new
+package on ghcr.io is private, and GitHub has no API to change that, so once,
+after the first image is built: open the
+[package settings](https://github.com/orgs/{{ org }}/packages/container/{{ repo }}/settings)
+and use *Change visibility* to make it public. The build workflow warns until
+this is done.
+
+Then add this block to `ood_apps` in `vars/ondemand-config.yml` of the
 [training-environment](https://github.com/nesi/training-environment) deployment:
 
 ```yaml

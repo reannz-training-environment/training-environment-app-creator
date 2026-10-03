@@ -4,7 +4,12 @@ cluster: {{ defaults.ood_cluster | yaml_str }}
 form:
   - cpu
   - memory
-{% if gpu.enabled and gpu.session_form %}
+{% if gpu_choose %}
+  - gpu_card
+{% if gpu.session_form %}
+  - gpu_vram
+{% endif %}
+{% elif gpu.enabled and gpu.session_form %}
 {% for card in gpu.cards %}
   - vram_{{ card }}
 {% endfor %}
@@ -14,7 +19,37 @@ form:
 attributes:
   cpu: {{ app.resources.cpu }}
   memory: {{ app.resources.memory_gb }}
-{% if gpu.enabled and gpu.session_form %}
+{% if gpu_choose %}
+
+  # The session's one emulated GPU, chosen here from the cards the app offers.
+  # No physical GPU is involved: the card changes only the name, memory size,
+  # clocks and power the GPU tools report. A job asking Slurm for any other
+  # card is refused, the same way the cluster refuses a card a partition lacks.
+  gpu_card:
+    widget: select
+    label: "GPU"
+    help: |
+      The emulated NVIDIA GPU this session has. A batch job asks for it with
+      `--gpus-per-node=<name>:1`, the name in brackets below.
+    options:
+{% for card in gpu.cards %}
+      - [{{ (gpu_cards[card].model ~ ", " ~ gpu_cards[card].memory ~ " (" ~ card ~ ")") | yaml_str }}, {{ card | yaml_str }}]
+{% endfor %}
+    value: {{ gpu.cards[0] | yaml_str }}
+{% if gpu.session_form %}
+  gpu_vram:
+    widget: select
+    label: "GPU memory"
+    help: |
+      How much memory the GPU reports. A small card makes out-of-memory errors
+      cheap to teach; full size is what the real board has.
+    options:
+{% for option in vram_options %}
+      - [{{ vram_label(option, gpu.vram) | yaml_str }}, {{ option | yaml_str }}]
+{% endfor %}
+    value: {{ gpu.vram | yaml_str }}
+{% endif %}
+{% elif gpu.enabled and gpu.session_form %}
 
   # One control per emulated card. No physical GPU is involved: a card changes
   # only the name, memory size, clocks and power the GPU tools report. Asking

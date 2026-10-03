@@ -1,0 +1,33 @@
+{% if slurm.enabled %}
+
+# ---------------------------------------------------------------------------
+# NeSI's own seff and svisit, from nesi/opt-nesi-bin (AGPL-3.0), in place of
+# the emulator's look-alikes, so learners use the tools they will use on the
+# cluster. scripts/slurm-nesi-tools.py teaches the Slurm emulator the sacct,
+# squeue and srun options the two tools rely on. One site setting of seff is
+# changed: the training environment counts cores, not hyperthreads.
+# ---------------------------------------------------------------------------
+ARG OPT_NESI_BIN_REPO={{ pins.opt_nesi_bin_repo }}
+ARG OPT_NESI_BIN_REF={{ pins.opt_nesi_bin_ref }}
+COPY scripts/slurm-nesi-tools.py /opt/app-creator/slurm-nesi-tools.py
+RUN SLURM_PY="$(python3 -c 'import gpuemu.slurm as s; print(s.__file__)')" \
+    && cat /opt/app-creator/slurm-nesi-tools.py >> "${SLURM_PY}" \
+    && python3 -m compileall -q "$(dirname "${SLURM_PY}")" \
+    && BIN="$(dirname "$(command -v sbatch)")" \
+    && mkdir -p /tmp/opt-nesi-bin \
+    && cd /tmp/opt-nesi-bin \
+    && git init -q \
+    && git fetch -q --depth 1 "${OPT_NESI_BIN_REPO}" "${OPT_NESI_BIN_REF}" \
+    && git checkout -q FETCH_HEAD \
+    && sed -i '/^def partition_cpus_per_core/,/return/ s/return 2/return 1/' nn_seff \
+    && grep -A1 '^def partition_cpus_per_core' nn_seff | grep -q 'return 1' \
+    && install -m 0755 nn_seff "${BIN}/nn_seff" \
+    && ln -sf nn_seff "${BIN}/seff" \
+    && install -m 0755 svisit "${BIN}/svisit" \
+    && install -d /usr/local/share/doc/opt-nesi-bin \
+    && install -m 0644 LICENSE README.md /usr/local/share/doc/opt-nesi-bin/ \
+    && echo "nn_seff (as seff) and svisit from ${OPT_NESI_BIN_REPO} at ${OPT_NESI_BIN_REF}; nn_seff's partition_cpus_per_core returns 1" \
+        > /usr/local/share/doc/opt-nesi-bin/SOURCE \
+    && cd / \
+    && rm -rf /tmp/opt-nesi-bin
+{% endif %}

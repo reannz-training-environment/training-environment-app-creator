@@ -37,6 +37,28 @@ run_job() {
     fi
     echo "${job}"
 }
+
+# NeSI's seff on a finished job, and NeSI's svisit into a running one
+check_nesi_tools() {
+    local finished="$1" running state
+    [ "$(basename "$(readlink -f "$(command -v seff)")")" = "nn_seff" ] || fail "seff is not NeSI's nn_seff"
+    seff "${finished}" > seff.out 2>&1 || { cat seff.out >&2; fail "seff could not report on job ${finished}"; }
+    grep -q "^Job ID: ${finished}$" seff.out && grep -q "^Avg CPU Utilisation:" seff.out \
+        || { cat seff.out >&2; fail "seff's report on job ${finished} is incomplete"; }
+    if [ -n "${2:-}" ]; then
+        grep -q "^Peak GPU Utilisation:" seff.out || { cat seff.out >&2; fail "seff has no GPU lines for a GPU job"; }
+    fi
+    running="$(sbatch --parsable --time=00:05:00 --wrap 'sleep 120')"
+    for _ in $(seq 1 60); do
+        state="$(sacct -n -j "${running}" | awk '{print $6}')"
+        [ "${state}" = "RUNNING" ] && break
+        sleep 0.5
+    done
+    [ "$(svisit "${running}" printenv SLURM_JOB_ID)" = "${running}" ] || fail "svisit did not get into job ${running}"
+    svisit -t | grep -q -- "--jobid=${running}" || fail "svisit did not find the running job by itself"
+    scancel "${running}"
+    ok "NeSI's seff and svisit"
+}
 {% endif %}
 
 # --- Open OnDemand on k8s -------------------------------------------------
@@ -129,6 +151,7 @@ nvidia-smi -L || fail "nvidia-smi cannot see the emulated GPUs"
 cd "${work}"
 job="$(run_job --gpus-per-node={{ gpu.cards[0] }}:1 --wrap 'nvidia-smi -L')"
 grep -q "GPU 0" "slurm-${job}.out" || fail "a batch job that asked for a GPU could not see it"
+check_nesi_tools "${job}" gpu
 {% if lmod %}
 run_job --wrap 'module --version' > /dev/null
 ok "module works inside batch jobs"
@@ -147,6 +170,7 @@ sinfo | grep -q "^{{ slurm.partition }}\*" || fail "sinfo does not show the {{ s
 cd "${work}"
 job="$(run_job --wrap 'echo "job ${SLURM_JOB_ID} ran on ${SLURMD_NODENAME}"')"
 grep -q "ran on {{ slurm.node_name }}" "slurm-${job}.out" || fail "the batch job did not run on {{ slurm.node_name }}"
+check_nesi_tools "${job}"
 if sbatch --gpus-per-node=1 --wrap true 2> /dev/null; then
     fail "a GPU request was accepted on a node with no GPUs"
 fi

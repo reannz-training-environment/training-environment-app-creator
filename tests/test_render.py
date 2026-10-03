@@ -61,7 +61,7 @@ def test_gpu_form_has_one_memory_control_per_card(schema, defaults):
         gpu = spec.app["features"]["gpu"]
         form = yaml.safe_load(files["form.yml"].content)
         controls = [a for a in form["form"] if a.startswith("vram_")]
-        if gpu["enabled"] and gpu["session_form"]:
+        if gpu["enabled"] and gpu["mode"] == "all" and gpu["session_form"]:
             assert controls == [f"vram_{c}" for c in gpu["cards"]]
             for control in controls:
                 values = [option[1] for option in form["attributes"][control]["options"]]
@@ -72,6 +72,60 @@ def test_gpu_form_has_one_memory_control_per_card(schema, defaults):
                 assert f"=> {control}," in submit
         else:
             assert controls == []
+
+
+def gpu_spec(schema, defaults, **gpu):
+    from te_app_creator.spec import check
+
+    raw = {
+        "schema_version": 1,
+        "name": "gpus",
+        "title": "GPUs",
+        "interfaces": ["jupyter", "rstudio", "codeserver"],
+        "features": {"gpu": {"enabled": True, **gpu}},
+    }
+    return check(raw, "apps/gpus.yml", schema, defaults)
+
+
+@pytest.mark.parametrize("session_form", [True, False])
+def test_choose_mode_offers_one_gpu_from_a_menu(schema, defaults, session_form):
+    spec = gpu_spec(schema, defaults, mode="choose", cards=["l4", "h100"], vram="1GiB", session_form=session_form)
+    for interface in spec.app["interfaces"]:
+        files = {f.path: f for f in render.render(spec, interface, defaults)}
+        form = yaml.safe_load(files["form.yml"].content)
+        assert "gpu_card" in form["form"]
+        assert not [a for a in form["form"] if a.startswith("vram_")]
+        menu = form["attributes"]["gpu_card"]
+        assert menu["widget"] == "select"
+        assert [option[1] for option in menu["options"]] == ["l4", "h100"]
+        assert menu["value"] == "l4"
+        assert ("gpu_vram" in form["form"]) == session_form
+        if session_form:
+            assert form["attributes"]["gpu_vram"]["value"] == "1GiB"
+
+        submit = files["submit.yml.erb"].content.decode()
+        assert "cards = %w[l4 h100]" in submit
+        assert 'fleet = "#{card}:#{vram}"' in submit
+        assert 'GPUEMU_FLEET: "<%= fleet %>"' in submit
+        assert ("gpu_vram.to_s" in submit) == session_form
+        # without the form, a session gets the first card on offer
+        dockerfile = files["docker/Dockerfile"].content.decode()
+        assert "ENV GPUEMU_FLEET=l4:1GiB\n" in dockerfile
+        assert "an EMULATED NVIDIA GPU" in files["docker/scripts/gpu-banner.sh"].content.decode()
+
+
+def test_all_mode_without_the_form_fixes_the_fleet(schema, defaults):
+    spec = gpu_spec(schema, defaults, mode="all", cards=["l4", "a100"], session_form=False)
+    files = {f.path: f for f in render.render(spec, "jupyter", defaults)}
+    form = yaml.safe_load(files["form.yml"].content)
+    assert form["form"] == ["cpu", "memory", "wall_time"]
+    assert "GPUEMU_FLEET" not in files["submit.yml.erb"].content.decode()
+    assert "ENV GPUEMU_FLEET=l4:200MiB,a100:200MiB\n" in files["docker/Dockerfile"].content.decode()
+
+
+def test_choose_mode_with_one_card_warns(schema, defaults):
+    spec = gpu_spec(schema, defaults, mode="choose", cards=["l4"])
+    assert any("only one card" in w for w in spec.warnings)
 
 
 def test_submit_is_yaml_once_erb_is_rendered(schema, defaults):
@@ -144,6 +198,9 @@ def test_dockerfile_has_each_feature(schema, defaults):
         assert ("TACC/Lmod" in dockerfile) == features["lmod"]["enabled"]
         assert ("/bin/module" in dockerfile) == (not features["lmod"]["enabled"])
         assert ("slurm-cpu-node.py" in dockerfile) == (features["slurm"]["enabled"] and not features["gpu"]["enabled"])
+        # NeSI's seff and svisit come with every Slurm, GPU or not
+        assert ("opt-nesi-bin" in dockerfile) == features["slurm"]["enabled"]
+        assert ("docker/scripts/slurm-nesi-tools.py" in files) == features["slurm"]["enabled"]
         assert ("micromamba create" in dockerfile) == bool(spec.app["software"]["conda"]["packages"])
         for item in spec.app["data"]:
             assert f'"{item["dest"]}"' in dockerfile

@@ -8,16 +8,17 @@ if [ -n "${PS1:-}" ] && [ -z "${GPUEMU_BANNER_SHOWN:-}" ]; then
     export GPUEMU_BANNER_SHOWN=1
     cat <<'BANNER'
 
-  This session has EMULATED NVIDIA GPUs. There is no real GPU.
+  This session has {% if gpu_choose %}an EMULATED NVIDIA GPU{% else %}EMULATED NVIDIA GPUs{% endif %}. There is no real GPU.
 
   nvidia-smi, nvtop{% if gpu.pytorch %}, sbatch and torch.cuda{% else %} and sbatch{% endif %} all work, and GPU memory limits
   are enforced - but the arithmetic runs on the CPU, so timings here mean
   nothing about GPU performance.
 
-    nvidia-smi          state of the emulated GPUs
+    nvidia-smi          state of the emulated {% if gpu_choose %}GPU{% else %}GPUs{% endif +%}
     nvtop               live view (q to quit)
-    sinfo -l            the GPUs this node has, as --gpus-per-node names them
+    sinfo -l            {% if gpu_choose %}the GPU this node has{% else %}the GPUs this node has{% endif %}, as --gpus-per-node names {% if gpu_choose %}it{% else %}them{% endif +%}
     sbatch job.sl       submit a job; squeue shows the queue, seff the result
+    svisit <jobid>      a shell inside a running job, to watch it with nvtop
     gpuemu-ctl status   check the emulator itself
 
 BANNER
