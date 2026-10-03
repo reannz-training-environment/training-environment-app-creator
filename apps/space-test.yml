@@ -1,0 +1,15 @@
+# A throwaway app that tests the pull request's space report; not to be merged.
+schema_version: 1
+name: space-test
+title: Space test
+version: 0.1.0
+interfaces: [jupyter]
+software:
+  conda:
+    packages: [samtools]
+data:
+  - type: github
+    repo: nesi/intro-python
+    ref: 6cac80f1d8d15c10ff219e5ff5fc9673fc4ea348
+    path: data
+    dest: intro-python/data
