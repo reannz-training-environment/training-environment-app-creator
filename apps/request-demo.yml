@@ -1,0 +1,16 @@
+# A REANNZ training environment app, from the app creator website.
+# Live check of the request flow: closed afterwards, never merged.
+schema_version: 1
+name: request-demo
+title: Request demo
+description: Checks the app request flow from the website; closed, never merged.
+version: 0.1.0
+interfaces:
+  - jupyter
+resources:
+  cpu: 2
+  memory_gb: 4
+  wall_time_hours:
+    default: 8
+    min: 4
+    max: 12
