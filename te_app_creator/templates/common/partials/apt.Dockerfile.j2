@@ -1,9 +1,8 @@
 {% if apt_packages %}
 
-# system packages requested in the app spec
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-{% for package in apt_packages %}
-        {{ package }} \
-{% endfor %}
+# system packages requested in the app spec (docker/apt-packages.txt)
+COPY apt-packages.txt /opt/app-creator/apt-packages.txt
+RUN apt-get update \
+    && xargs -a /opt/app-creator/apt-packages.txt env DEBIAN_FRONTEND=noninteractive apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 {% endif %}

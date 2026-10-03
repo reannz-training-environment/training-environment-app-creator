@@ -24,7 +24,12 @@ die() {
     exit 1
 }
 
+# Readable by everyone, writable by no one but root, set before the files move
+# into place: changing them afterwards, in another layer, would store every
+# file in the image a second time.
 copy_into() {
+    chown -R root:root "$1"
+    chmod -R a+rX,go-w "$1"
     mkdir -p "${ROOT}/$2"
     cp -a "$1"/. "${ROOT}/$2"/
 }
@@ -79,8 +84,9 @@ url)
         fi
         copy_into "${src}" "${dest}"
     else
-        mkdir -p "${ROOT}/${dest}"
-        cp "${work}/${name}" "${ROOT}/${dest}/${name}"
+        mkdir -p "${work}/file"
+        mv "${work}/${name}" "${work}/file/${name}"
+        copy_into "${work}/file" "${dest}"
     fi
     echo "fetch-data: ${url} -> ~/${dest}"
     ;;

@@ -18,7 +18,4 @@ RUN fetch-data github "{{ item.repo }}" "{{ item.ref }}" "{{ item.path }}" "{{ i
 RUN fetch-data url "{{ item.url }}" {{ "yes" if item.extract else "no" }} "{{ item.sha256 or "-" }}" "{{ item.dest }}"
 {% endif %}
 {% endfor %}
-
-RUN chown -R root:root /opt/training-data \
-    && chmod -R a+rX,go-w /opt/training-data
 {% endif %}

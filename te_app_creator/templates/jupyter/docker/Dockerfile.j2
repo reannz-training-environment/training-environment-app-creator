@@ -12,14 +12,13 @@ FROM ubuntu:{{ pins.ubuntu }}
 {% include "partials/nesi-tools.Dockerfile.j2" %}
 {% include "partials/conda.Dockerfile.j2" %}
 
-# install JupyterLab{% if pip_packages %}, with the Python packages requested in the app spec
-# (docker/requirements.txt) resolved together with it{% endif %}
-
-{% if pip_packages %}
-COPY requirements.txt /opt/app-creator/requirements.txt
-RUN {{ pip }} install jupyterlab -r /opt/app-creator/requirements.txt
-{% else %}
+# install JupyterLab
 RUN {{ pip }} install jupyterlab
+{% if pip_packages %}
+
+# Python packages requested in the app spec (docker/requirements.txt)
+COPY requirements.txt /opt/app-creator/requirements.txt
+RUN {{ pip }} install -r /opt/app-creator/requirements.txt
 {% endif %}
 {% include "partials/data.Dockerfile.j2" %}
 {% include "partials/custom.Dockerfile.j2" %}
