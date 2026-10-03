@@ -46,7 +46,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
 # matplotlib.{% if gpu.pytorch %} PyTorch is the CPU build: the CUDA build is far larger and
 # could not run anyway; the emulator is what makes torch.cuda work.{% endif %}
 
-RUN {{ pip }} install nvidia-ml-py matplotlib{% if gpu.numba %} numba{% endif %}{% if iface.key == "jupyter" %} jupyterlab-nvdashboard{% endif %}{% if gpu.pytorch %} \
+RUN {{ pip }} install nvidia-ml-py matplotlib{% if gpu.numba %} numba{% endif %}{% if gpu.pytorch %} \
     && {{ pip }} install --index-url https://download.pytorch.org/whl/cpu torch torchvision{% endif +%}
 
 {% if gpu.numba %}

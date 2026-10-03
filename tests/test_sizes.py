@@ -50,6 +50,18 @@ def test_layers_are_attributed_to_what_the_spec_asked_for():
     assert "r" not in parts and "vscode" not in parts
 
 
+def test_build_arguments_listed_on_a_layer_do_not_decide_its_part():
+    layers = [
+        (400 * MB, 'RUN |3 GPUEMU_REF=abc OPT_NESI_BIN_REPO=https://github.com/nesi/opt-nesi-bin.git '
+                   'MICROMAMBA_VERSION=2.8.1-1 /bin/sh -c micromamba create -y -p /opt/conda/envs/apps # buildkit'),
+        (2 * MB, 'RUN |1 OPT_NESI_BIN_REPO=https://github.com/nesi/opt-nesi-bin.git /bin/sh -c '
+                 'fetch-data github "nesi/intro-python" "v0.5.0" "data" "intro-python/data" # buildkit'),
+    ]
+    report = sizes.attribute(layers, "jupyter")
+    assert {p["key"]: p["bytes"] for p in report["parts"]} == {"conda": 400 * MB, "base": 0}
+    assert report["data"] == [{"dest": "intro-python/data", "bytes": 2 * MB}]
+
+
 def test_slurm_only_emulator_is_not_counted_as_gpu():
     layers = [(9 * MB, 'RUN /bin/sh -c mv docker/gpuemu /opt/gpuemu/src && cat /opt/app-creator/slurm-cpu-node.py >> x # buildkit')]
     parts = {p["key"]: p["bytes"] for p in sizes.attribute(layers, "jupyter")["parts"]}

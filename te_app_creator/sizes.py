@@ -76,12 +76,25 @@ def download_size(image: str) -> int:
     return int(out.strip())
 
 
+def instruction(created_by: str) -> str:
+    """The command of a layer, without the build arguments docker lists first.
+
+    `RUN |2 A=1 B=https://... /bin/sh -c <command>`: every ARG in scope is
+    listed on every later RUN, so matching on them would give a layer to
+    whichever feature declared an ARG before it.
+    """
+    if created_by.startswith("RUN |") and "/bin/sh -c " in created_by:
+        return created_by.split("/bin/sh -c ", 1)[1]
+    return created_by
+
+
 def attribute(layers: list[tuple[int, str]], interface: str) -> dict[str, Any]:
     """Split layer sizes into data destinations and kinds of software."""
     data: dict[str, int] = {}
     parts = {key: 0 for key, _, _ in PARTS}
     base = 0
     for size, created_by in layers:
+        created_by = instruction(created_by)
         match = DATA_STEP.search(created_by)
         if match:
             dest = match.group(3)

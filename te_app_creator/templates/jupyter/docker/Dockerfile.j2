@@ -12,8 +12,8 @@ FROM ubuntu:{{ pins.ubuntu }}
 {% include "partials/nesi-tools.Dockerfile.j2" %}
 {% include "partials/conda.Dockerfile.j2" %}
 
-# install JupyterLab
-RUN {{ pip }} install jupyterlab
+# install JupyterLab{% if gpu.enabled %}, with the GPU dashboards (jupyterlab-nvdashboard){% endif +%}
+RUN {{ pip }} install jupyterlab{% if gpu.enabled %} jupyterlab-nvdashboard{% endif +%}
 {% if pip_packages %}
 
 # Python packages requested in the app spec (docker/requirements.txt)
