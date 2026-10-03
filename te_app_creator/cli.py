@@ -4,7 +4,11 @@
   render SPEC [-o DIR]      write the generated apps to DIR/<repository name>/
   matrix [SPEC ...]         JSON list of (spec, interface, repository), for CI
   summary [SPEC ...]        Markdown summary of what merging the specs does
-  publish SPEC [...]        create the repositories, or open update pull requests
+  request --event FILE      turn an app request (an issue) into a pull request
+  handoff --pr N ...        after a request's test builds: ask for approval
+  publish SPEC [...]        create the repositories, or update them
+  ready REPORT              wait for the released images, and say if they are ready
+  setup-app                 make the GitHub App the workflows act as
 """
 
 from __future__ import annotations
@@ -12,11 +16,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 from . import publish as publisher
-from . import render, sizes
+from . import ready, render, request, sizes
 from .spec import INTERFACES, ROOT, Spec, SpecError, load, load_defaults, load_schema
 
 
@@ -157,7 +164,7 @@ def cmd_summary(args) -> int:
             if gh:
                 try:
                     if gh.repo(full):
-                        state = "exists: an update pull request will be opened if anything changed"
+                        state = "exists: will be updated to match"
                 except publisher.PublishError:
                     state = "unknown"
             out.append(f"| {INTERFACES[interface]['label']} | [`{name}`](https://github.com/{full}) | {state} |")
@@ -179,6 +186,10 @@ def cmd_summary(args) -> int:
             out.append("* :warning: Runs its own startup commands (`advanced.startup`); review them.")
         for warning in spec.warnings:
             out.append(f"* :warning: {warning}")
+        if args.base:
+            stale = _unreleased_change(spec, args.base)
+            if stale:
+                out.append(f"* :warning: {stale}")
         out.append("")
         if args.sizes:
             out.extend(_sizes_section(spec, defaults, Path(args.sizes)))
@@ -188,6 +199,28 @@ def cmd_summary(args) -> int:
         out.append("")
     print("\n".join(out))
     return 1 if errors else 0
+
+
+def _unreleased_change(spec: Spec, base: str) -> str:
+    """A warning when a spec that exists at `base` changes without a new version:
+    the repositories would change, but sessions would keep the old image."""
+    path = Path(spec.path)
+    rel = path.relative_to(ROOT) if path.is_absolute() else path
+    proc = subprocess.run(["git", "show", f"{base}:{rel.as_posix()}"], cwd=ROOT, capture_output=True, text=True)
+    if proc.returncode != 0:
+        return ""
+    try:
+        old = yaml.safe_load(proc.stdout) or {}
+    except yaml.YAMLError:
+        return ""
+    before = str(old.get("version", "0.1.0"))
+    after = spec.app["version"]
+    if request._version(after) > request._version(before):
+        return ""
+    return (
+        f"This changes an existing app without raising its version (still v{after}), so no new image is "
+        f"released: sessions keep running v{before}. Make the version {request.next_version(before)} to release it."
+    )
 
 
 def _sizes_section(spec: Spec, defaults: dict, directory: Path) -> list[str]:
@@ -234,16 +267,101 @@ def cmd_comment(args) -> int:
         print("comment needs GH_TOKEN (or GITHUB_TOKEN) and GITHUB_REPOSITORY", file=sys.stderr)
         return 1
     body = Path(args.file).read_text(encoding="utf-8")
-    if not body.startswith(MARKER):
-        body = f"{MARKER}\n{body}"
-    gh = publisher.GitHub(token)
-    comments = gh.call("GET", f"/repos/{repo}/issues/{args.pr}/comments?per_page=100")
-    mine = [c for c in comments if (c.get("body") or "").startswith(MARKER)]
-    if mine:
-        gh.call("PATCH", f"/repos/{repo}/issues/comments/{mine[0]['id']}", {"body": body})
-    else:
-        gh.call("POST", f"/repos/{repo}/issues/{args.pr}/comments", {"body": body})
+    if body.startswith(MARKER):
+        body = body[len(MARKER) :].lstrip("\n")
+    publisher.GitHub(token).comment(repo, args.pr, body, MARKER)
     return 0
+
+
+def cmd_request(args) -> int:
+    """Turn the app request in an `issues` event into a pull request."""
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    event = json.loads(Path(args.event).read_text(encoding="utf-8"))
+    app_token = os.environ.get("APP_CREATOR_TOKEN")
+    fallback = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not repo or not (app_token or fallback):
+        print("request needs GITHUB_REPOSITORY, and APP_CREATOR_TOKEN or GH_TOKEN", file=sys.stderr)
+        return 1
+    if not app_token:
+        # GITHUB_TOKEN can answer, but a pull request it opened would start no checks
+        issue = event["issue"]
+        publisher.GitHub(fallback).comment(
+            repo,
+            issue["number"],
+            f"Thanks @{issue['user']['login']}. The app creator cannot act on requests yet: it needs its GitHub "
+            "App, which a maintainer sets up once (see *Setting up* in the README). The request will be picked "
+            "up when this issue is next edited.\n",
+            request.MARKER,
+        )
+        print("::error::No GitHub App token: run `python -m te_app_creator setup-app` (see the README).")
+        return 1
+    outcome = request.handle(
+        event, repo, publisher.GitHub(app_token), load_schema(), load_defaults(), log=lambda m: print(m, file=sys.stderr)
+    )
+    print(outcome)
+    return 0
+
+
+def cmd_handoff(args) -> int:
+    """After a request's images are test-built: ask for approval, or report the failure."""
+    token = _token()
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not token or not repo:
+        print("handoff needs GH_TOKEN (or GITHUB_TOKEN) and GITHUB_REPOSITORY", file=sys.stderr)
+        return 1
+    print(request.handoff(publisher.GitHub(token), repo, args.pr, args.built, args.run_url, load_defaults()))
+    return 0
+
+
+def cmd_ready(args) -> int:
+    """Wait for the images the publish report says were released, then report."""
+    token = _token()
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if not token:
+        print("ready needs GH_TOKEN (or GITHUB_TOKEN), to follow the builds", file=sys.stderr)
+        return 1
+    defaults = load_defaults()
+    results = json.loads(Path(args.report).read_text(encoding="utf-8"))
+    items = [
+        {
+            "repo": r["repo"],
+            "interface": r["interface"],
+            "tag": r["tag"],
+            "sha": r["sha"],
+            "image": ready.image_name(defaults, r["repo"]),
+            "state": "waiting",
+        }
+        for r in results
+        if r.get("tag")
+    ]
+    if not items:
+        print("Nothing new was released, so there are no images to wait for.")
+        return 0
+    gh = publisher.GitHub(token)
+    mentions = []
+    if args.pr and repo:
+        pr = gh.call("GET", f"/repos/{repo}/pulls/{args.pr}")
+        match = request.REQUESTED_BY.search(pr.get("body") or "")
+        if match:
+            mentions.append(match.group(1))
+    for name in args.mention or []:
+        if name and "[bot]" not in name and name.lower() not in {m.lower() for m in mentions}:
+            mentions.append(name)
+    ready.wait(gh, items, timeout=args.timeout_minutes * 60, log=lambda m: print(m, file=sys.stderr))
+    text = ready.markdown(items, mentions)
+    print(text)
+    if args.markdown:
+        Path(args.markdown).write_text(text, encoding="utf-8")
+    if args.pr and repo:
+        gh.comment(repo, args.pr, text)
+    return 0 if all(i["state"] == "built" for i in items) else 1
+
+
+def cmd_setup_app(args) -> int:
+    from . import setup_app
+
+    defaults = load_defaults()
+    return setup_app.run(args.org or defaults["github_org"], args.repo, args.name, defaults.get("website", ""))
 
 
 def cmd_publish(args) -> int:
@@ -273,6 +391,7 @@ def cmd_publish(args) -> int:
                         defaults,
                         token,
                         dry_run=args.dry_run,
+                        merge=args.merge_updates,
                         creator_sha=os.environ.get("GITHUB_SHA"),
                         git_protocol=args.git_protocol,
                         log=lambda m: print(m, file=sys.stderr),
@@ -296,6 +415,7 @@ def cmd_publish(args) -> int:
 _ACTIONS = {
     "created": "created",
     "updated": "update pull request opened",
+    "merged": "updated",
     "unchanged": "already up to date",
     "would-create": "would be created",
     "would-update": "exists, would be updated",
@@ -313,24 +433,20 @@ def _report_markdown(results: list[publisher.Result], dry_run: bool) -> str:
     for r in results:
         link = f"[`{r.repo}`](https://github.com/{r.repo})"
         result = _ACTIONS.get(r.action, r.action)
-        if r.action == "updated":
+        if r.action in ("updated", "merged"):
             result = f"[{result}]({r.url})"
         lines.append(f"| {link} | {INTERFACES[r.interface]['label']} | {result} | {r.detail} |")
-    created = [r for r in results if r.action == "created"]
-    if created:
+    if any(r.tag for r in results):
         lines += [
             "",
-            "Each new repository releases its first version and pushes its image to ghcr.io from its "
-            "own workflows, which takes a few minutes. Then, once per app, **make its image public**, "
-            "since new packages are private and the training environment pulls without credentials:",
-            "",
+            "Each repository is now releasing that version and building its image, with its own workflows; "
+            "that takes 10 to 30 minutes. The app creator follows the builds, and says here when the "
+            "images are ready.",
         ]
-        for r in created:
-            org, name = r.repo.split("/")
-            lines.append(f"* [`{name}` package settings](https://github.com/orgs/{org}/packages/container/{name}/settings): *Change visibility*")
+    if any(r.action == "updated" for r in results):
         lines += [
             "",
-            "Each repository's README has the `ood_apps` block that adds it to the training environment.",
+            "Merging an update pull request releases it, if the app's version is new.",
         ]
     return "\n".join(lines) + "\n"
 
@@ -357,6 +473,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("summary", help="Markdown summary of specs")
     p.add_argument("specs", nargs="*")
     p.add_argument("--sizes", help="directory of `sizes --json` reports to include")
+    p.add_argument("--base", help="git commit to compare versions with, to warn of changes that would not be released")
     p.set_defaults(func=cmd_summary)
 
     p = sub.add_parser("sizes", help="measure a built image of an app")
@@ -372,14 +489,39 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--file", required=True)
     p.set_defaults(func=cmd_comment)
 
+    p = sub.add_parser("request", help="turn an app request into a pull request")
+    p.add_argument("--event", required=True, help="the `issues` event, as JSON (GITHUB_EVENT_PATH)")
+    p.set_defaults(func=cmd_request)
+
+    p = sub.add_parser("handoff", help="after a request's test builds: ask for approval, or report the failure")
+    p.add_argument("--pr", required=True, type=int)
+    p.add_argument("--built", required=True, help="how the test builds went: success, failure, cancelled, ...")
+    p.add_argument("--run-url", default="", help="the run that built them")
+    p.set_defaults(func=cmd_handoff)
+
     p = sub.add_parser("publish", help="create or update the app repositories")
     p.add_argument("specs", nargs="+")
     p.add_argument("-i", "--interface", choices=list(INTERFACES))
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--merge-updates", action="store_true", help="merge the update pull requests, releasing them")
     p.add_argument("--git-protocol", choices=["https", "ssh"], default="https")
     p.add_argument("--report", help="write the results as JSON to this file")
     p.add_argument("--markdown", help="write the results as Markdown to this file")
     p.set_defaults(func=cmd_publish)
+
+    p = sub.add_parser("ready", help="wait for released images, then say whether they are ready")
+    p.add_argument("report", help="the JSON report of publish")
+    p.add_argument("--pr", type=int, help="the merged pull request to comment on")
+    p.add_argument("--mention", action="append", help="someone to tell (repeatable)")
+    p.add_argument("--timeout-minutes", type=float, default=120)
+    p.add_argument("--markdown", help="also write the report to this file")
+    p.set_defaults(func=cmd_ready)
+
+    p = sub.add_parser("setup-app", help="make the GitHub App the workflows act as (once, as an organisation owner)")
+    p.add_argument("--org", help="default: github_org in config/defaults.yml")
+    p.add_argument("--repo", default="training-environment-app-creator")
+    p.add_argument("--name", default="REANNZ training app creator", help="the App's name, unique across GitHub")
+    p.set_defaults(func=cmd_setup_app)
 
     args = ap.parse_args(argv)
     return args.func(args)

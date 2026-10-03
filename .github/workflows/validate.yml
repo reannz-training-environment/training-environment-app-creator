@@ -8,6 +8,10 @@
 #
 # It comments on the pull request with what merging it will create or update,
 # then, once the images are built, with how much space each of them needs.
+#
+# For an app request's pull request (branch app-request/<issue>), it then asks
+# the reviewers to approve it when every image built, or tells the requester
+# when one did not.
 name: Validate
 
 on:
@@ -21,6 +25,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  issues: write
 
 concurrency:
   group: validate-${{ github.event.pull_request.number || github.ref }}
@@ -86,11 +91,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SPECS: ${{ steps.plan.outputs.app_specs }}
+          BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           {
             echo "## What merging this pull request does"
             echo
-            python -m te_app_creator summary ${SPECS} || true
+            python -m te_app_creator summary ${SPECS} ${BASE:+--base "${BASE}"} || true
             echo
             echo "Each image is being test-built; this comment will then say how much space it needs."
           } > summary.md
@@ -174,10 +180,12 @@ jobs:
   # needs: on the pull request, and in the run's summary.
   report:
     needs: [check, build]
-    if: always() && needs.check.result == 'success' && needs.check.outputs.matrix != '[]'
+    if: ${{ !cancelled() && needs.check.result == 'success' && needs.check.outputs.matrix != '[]' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -201,12 +209,42 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           SPECS: ${{ needs.check.outputs.app_specs }}
+          BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           {
             echo "## What merging this pull request does"
             echo
-            python -m te_app_creator summary ${SPECS} --sizes sizes || true
+            python -m te_app_creator summary ${SPECS} --sizes sizes --base "${BASE}" || true
             echo
             echo "Every image was test-built by this workflow; see the checks below."
           } > summary.md
           python -m te_app_creator comment --pr "${PR}" --file summary.md
+
+  # An app request goes to the reviewers once all its images build; if one
+  # does not, the requester hears about it on their request.
+  handoff:
+    needs: [check, build]
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && startsWith(github.head_ref, 'app-request/') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Ask for approval, or say what went wrong
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          CHECK: ${{ needs.check.result }}
+          BUILD: ${{ needs.build.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "${CHECK}" = "success" ] && [ "${BUILD}" = "success" ]; then
+            built=success
+          elif [ "${CHECK}" = "failure" ] || [ "${BUILD}" = "failure" ]; then
+            built=failure
+          else
+            built="${BUILD}"
+          fi
+          python -m te_app_creator handoff --pr "${PR}" --built "${built}" --run-url "${RUN_URL}"

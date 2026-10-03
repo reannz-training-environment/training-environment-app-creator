@@ -1,7 +1,7 @@
 <!--
-Pull requests from the app creator website add or change one file in apps/.
-The Validate workflow comments with the repositories merging will create or
-update, and test-builds every image.
+App requests from the app creator website become pull requests by themselves;
+this template is for changes made by hand. The Validate workflow comments with
+the repositories merging will create or update, and test-builds every image.
 -->
 
 ## App

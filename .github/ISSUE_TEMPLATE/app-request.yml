@@ -1,0 +1,22 @@
+# The app creator website fills this form in and opens it; the requester only
+# presses Create. The Request workflow turns it into a pull request.
+name: Request an app
+description: Made by the app creator website. Press Create, and the app creator does the rest.
+title: "App request"
+labels: ["app request"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Filled in by the [app creator website](https://reannz-training-environment.github.io/training-environment-app-creator-website/).
+        Nothing needs changing: press **Create**. The app creator then opens a pull request with the
+        app, test-builds its images and asks a maintainer to approve it. Once it is approved, the app's
+        repositories are made and their images built.
+  - type: textarea
+    id: spec
+    attributes:
+      label: App spec
+      description: The app, as the website wrote it. To change it, change it on the website and make the request again.
+      render: yaml
+    validations:
+      required: true
