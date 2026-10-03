@@ -1,0 +1,59 @@
+# Turns an app request into a pull request.
+#
+# The app creator website files each request as an issue made with the
+# "Request an app" form. For a request from someone in the organisation, or one
+# a maintainer has labelled "request approved", this checks the spec, commits
+# it as apps/<name>.yml on the branch app-request/<issue number>, and opens a
+# pull request. Validate then test-builds the app's images, and once they all
+# build, asks the reviewers in config/defaults.yml to approve it. Merging it is
+# the approval: Publish then makes the app.
+#
+# It acts as the app creator's GitHub App, since a pull request opened with
+# GITHUB_TOKEN would start no checks.
+name: Request
+
+on:
+  issues:
+    types: [opened, edited, reopened, labeled]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: request-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  request:
+    if: >-
+      github.event.issue.state == 'open' &&
+      contains(github.event.issue.body, '### App spec') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'request approved')
+    runs-on: ubuntu-latest
+    steps:
+      # main's code, never the request's: the issue only supplies data
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Get a token from the GitHub App
+        id: app-token
+        if: vars.APP_CREATOR_CLIENT_ID != ''
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.APP_CREATOR_CLIENT_ID }}
+          private-key: ${{ secrets.APP_CREATOR_APP_PRIVATE_KEY }}
+          # this repository only, and only what opening a pull request needs
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+
+      - name: Open or update the pull request
+        env:
+          APP_CREATOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: python -m te_app_creator request --event "${GITHUB_EVENT_PATH}"

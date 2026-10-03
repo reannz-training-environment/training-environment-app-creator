@@ -1,16 +1,23 @@
-# Creates and updates app repositories when app specs reach main.
+# Makes and updates app repositories when app specs reach main. Merging an app
+# request's pull request is the approval; this does the rest.
 #
 # For each interface of each added or changed spec in apps/:
 # * a new app gets its repository, training-environment-<interface>-<name>-app,
 #   with the generated files; the repository's own workflows then release
 #   v<version> and push its image to ghcr.io
-# * an existing app gets a pull request with the regenerated files
+# * an existing app gets a pull request with the regenerated files, which the
+#   app creator merges itself; that releases the new version the same way
+# Then it follows those builds, and says on the merged pull request whether
+# the images are ready.
 #
 # Run it by hand to republish one app, or every app after a template change.
+# Run by hand, it only opens the update pull requests unless asked to merge
+# them.
 #
-# GITHUB_TOKEN cannot create repositories, so this needs either a GitHub App
-# (variable APP_CREATOR_CLIENT_ID, secret APP_CREATOR_APP_PRIVATE_KEY) or a token
-# (secret APP_CREATOR_TOKEN); see the README.
+# GITHUB_TOKEN cannot create repositories, so this acts as the app creator's
+# GitHub App (variable APP_CREATOR_CLIENT_ID, secret APP_CREATOR_APP_PRIVATE_KEY,
+# made by `python -m te_app_creator setup-app`), or with a token in the secret
+# APP_CREATOR_TOKEN; see the README.
 name: Publish
 
 on:
@@ -22,6 +29,10 @@ on:
       app:
         description: "App name to publish, or 'all' to regenerate every app"
         required: true
+      merge_updates:
+        description: "Merge the update pull requests too, releasing them"
+        type: boolean
+        default: false
       dry_run:
         description: "Only report what would happen"
         type: boolean
@@ -31,13 +42,17 @@ permissions:
   contents: read
   pull-requests: write
 
-concurrency:
-  group: publish
-  cancel-in-progress: false
-
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # one publish at a time; the wait for the images is a separate job, so it
+    # does not hold up the next one
+    concurrency:
+      group: publish
+      cancel-in-progress: false
+    outputs:
+      report: ${{ steps.publish.outputs.report }}
+      pr: ${{ steps.pr.outputs.pr }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -70,6 +85,15 @@ jobs:
           echo "specs=${specs}" >> "$GITHUB_OUTPUT"
           echo "publishing: ${specs:-nothing}"
 
+      - name: Find the pull request that was merged
+        id: pr
+        if: github.event_name == 'push' && steps.specs.outputs.specs != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" --jq '.[0].number // empty')
+          echo "pr=${pr}" >> "$GITHUB_OUTPUT"
+
       - name: Get a token from the GitHub App
         id: app-token
         if: vars.APP_CREATOR_CLIENT_ID != '' && steps.specs.outputs.specs != ''
@@ -90,31 +114,65 @@ jobs:
           echo "GIT_AUTHOR_EMAIL=${id}+${SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_ENV"
 
       - name: Publish
+        id: publish
         if: steps.specs.outputs.specs != ''
         env:
           APP_CREATOR_TOKEN: ${{ steps.app-token.outputs.token || secrets.APP_CREATOR_TOKEN }}
           SPECS: ${{ steps.specs.outputs.specs }}
           DRY_RUN: ${{ inputs.dry_run }}
+          # merging into main was the approval; by hand, only when asked
+          MERGE: ${{ github.event_name == 'push' || inputs.merge_updates }}
         run: |
           if [ -z "${APP_CREATOR_TOKEN}" ]; then
-            echo "::error::No token that can create repositories. Set up the GitHub App (APP_CREATOR_CLIENT_ID variable and APP_CREATOR_APP_PRIVATE_KEY secret) or an APP_CREATOR_TOKEN secret - see the README."
+            echo "::error::No token that can create repositories. Run 'python -m te_app_creator setup-app' to make the GitHub App, or set an APP_CREATOR_TOKEN secret - see the README."
             exit 1
           fi
           args=(--report report.json --markdown report.md)
           [ "${DRY_RUN}" = "true" ] && args+=(--dry-run)
-          python -m te_app_creator publish ${SPECS} "${args[@]}"
+          [ "${MERGE}" = "true" ] && args+=(--merge-updates)
+          status=0
+          python -m te_app_creator publish ${SPECS} "${args[@]}" || status=$?
+          if [ -f report.json ]; then
+            echo "report=$(python -c 'import json; print(json.dumps(json.load(open("report.json"))))')" >> "$GITHUB_OUTPUT"
+          fi
+          exit "${status}"
 
       - name: Report
         if: always() && steps.specs.outputs.specs != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
+          PR: ${{ steps.pr.outputs.pr }}
         run: |
           [ -f report.md ] || exit 0
           cat report.md >> "$GITHUB_STEP_SUMMARY"
-          if [ "${EVENT}" = "push" ]; then
-            pr=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" --jq '.[0].number // empty')
-            if [ -n "${pr}" ]; then
-              gh pr comment "${pr}" --body-file report.md
-            fi
+          if [ -n "${PR}" ]; then
+            gh pr comment "${PR}" --body-file report.md
           fi
+
+  # Follows each new release until its image is built, then says on the merged
+  # pull request whether the app is ready, telling whoever asked for it.
+  images:
+    needs: publish
+    if: ${{ !cancelled() && needs.publish.outputs.report != '' && inputs.dry_run != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Wait for the images, then say whether the app is ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT: ${{ needs.publish.outputs.report }}
+          PR: ${{ needs.publish.outputs.pr }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          printf '%s' "${REPORT}" > report.json
+          args=(report.json --markdown ready.md --timeout-minutes 120 --mention "${ACTOR}")
+          [ -n "${PR}" ] && args+=(--pr "${PR}")
+          status=0
+          python -m te_app_creator ready "${args[@]}" || status=$?
+          [ -f ready.md ] && cat ready.md >> "$GITHUB_STEP_SUMMARY"
+          exit "${status}"

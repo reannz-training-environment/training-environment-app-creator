@@ -22,6 +22,15 @@ timezone: Pacific/Auckland
 # training-environment deployment
 ood_cluster: my-k8s-cluster
 
+# The app creator website, which files app requests as issues here
+website: https://reannz-training-environment.github.io/training-environment-app-creator-website/
+
+# Who approves app requests: GitHub users asked to review a request's pull
+# request once all its images have test-built. Merging it is the approval,
+# and makes the app.
+reviewers:
+  - geoffreyweal
+
 pins:
   # base image for the JupyterLab and VS Code apps
   ubuntu: "22.04"
