@@ -105,8 +105,9 @@ GitHub Apps → New GitHub App:
 * install it on this organisation, for all repositories
 
 Then, in this repository's settings → Secrets and variables → Actions, add the
-App's ID as the variable `APP_CREATOR_APP_ID` and a private key of the App as
-the secret `APP_CREATOR_APP_PRIVATE_KEY`.
+App's *Client ID* (on the App's settings page) as the variable
+`APP_CREATOR_CLIENT_ID`, and a private key of the App (*Generate a private
+key*, on the same page) as the secret `APP_CREATOR_APP_PRIVATE_KEY`.
 
 **Or a fine-grained personal access token** with resource owner
 `reannz-training-environment`, access to all repositories, and the same four
