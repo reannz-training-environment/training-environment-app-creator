@@ -19,12 +19,13 @@ def manifest(app, generator="training-environment-app-creator"):
 class FakeGitHub(publish.GitHub):
     """Repositories, images and specs, in memory."""
 
-    def __init__(self, repos=None, packages=(), specs=(), can_delete_images=True):
+    def __init__(self, repos=None, packages=(), specs=(), sees_images=True):
         super().__init__("token")
         self.repos = dict(repos or {})  # name -> manifest payload, or None for a repository without one
         self.packages = set(packages)
         self.specs = set(specs)
-        self.can_delete_images = can_delete_images
+        # a GitHub App's token is refused by GitHub's API for images
+        self.sees_images = sees_images
         self.calls = []
 
     def request(self, method, path, data=None):
@@ -53,15 +54,14 @@ class FakeGitHub(publish.GitHub):
             return (200, found) if found else (404, None)
         if path.startswith(f"/orgs/{ORG}/packages/container/"):
             package = path.rsplit("/", 1)[1]
-            if method == "GET":
-                return (200, {}) if package in self.packages else (404, None)
+            if not self.sees_images:
+                return 403, {"message": "Resource not accessible by integration"}
+            if package not in self.packages:
+                return 404, {"message": "Package not found."}
             if method == "DELETE":
-                if package not in self.packages:
-                    return 404, {"message": "Package not found."}
-                if not self.can_delete_images:
-                    return 403, {"message": "Resource not accessible by integration"}
                 self.packages.discard(package)
                 return 204, None
+            return 200, {}
         raise AssertionError(f"unexpected call {method} {path}")
 
 
@@ -120,18 +120,32 @@ def test_repositories_the_app_creator_did_not_make_are_left_alone(defaults):
     assert removals[-1] == delete.Removal("spec", "apps/test2.yml", "not found")
 
 
-def test_an_image_github_will_not_let_the_app_delete_is_listed_to_delete_by_hand(defaults):
-    gh = FakeGitHub(repos={repo("jupyter"): manifest("test2")}, packages={repo("jupyter")}, can_delete_images=False)
+def test_images_the_app_may_not_delete_are_left_to_delete_by_hand(defaults):
+    gh = FakeGitHub(repos={repo("jupyter"): manifest("test2")}, packages={repo("jupyter")}, specs={"apps/test2.yml"}, sees_images=False)
     removals = run(gh, defaults=defaults)
-    image = [r for r in removals if r.what == "image"][0]
-    assert image.result == "failed"
-    assert f"https://github.com/orgs/{ORG}/packages/container/{repo('jupyter')}/settings" in image.detail
-    assert delete.markdown("test2", removals, dry_run=False).startswith("## :warning: The test2 app is partly deleted")
+    # the other interfaces had no repository, and the App cannot see whether
+    # they left images, so they are not listed
+    assert [(r.what, r.result) for r in removals] == [("repository", "deleted"), ("image", "by hand"), ("spec", "deleted")]
+    assert f"https://github.com/orgs/{ORG}/packages/container/{repo('jupyter')}/settings" in removals[1].detail
+    text = delete.markdown("test2", removals, dry_run=False)
+    assert text.startswith("## Deleted the test2 app, apart from its images")
+    assert "| Image | `ghcr.io/reannz-training-environment/training-environment-jupyter-test2-app` | :point_right: delete it by hand: from [its settings]" in text
+    assert "APP_CREATOR_PACKAGES_TOKEN" in text
 
-    # a token that can, deletes it
-    packages = FakeGitHub(packages={repo("jupyter")})
-    run(FakeGitHub(repos={repo("jupyter"): manifest("test2")}), packages=packages, defaults=defaults)
+    # with a token that may, they are deleted too
+    packages = FakeGitHub(packages={repo("jupyter"), repo("rstudio")})
+    removals = run(FakeGitHub(repos={repo("jupyter"): manifest("test2")}), packages=packages, defaults=defaults)
     assert not packages.packages
+    assert [r.result for r in removals if r.what == "image"] == ["deleted", "deleted", "not found"]
+
+
+def test_leaving_images_to_delete_by_hand_is_not_a_failure(monkeypatch, defaults):
+    gh = FakeGitHub(repos={repo("jupyter"): manifest("test2")}, packages={repo("jupyter")}, sees_images=False)
+    monkeypatch.setattr(cli.publisher, "GitHub", lambda token: gh)
+    monkeypatch.setenv("APP_CREATOR_TOKEN", "token")
+    monkeypatch.setenv("GITHUB_REPOSITORY", CREATOR)
+    monkeypatch.delenv("PACKAGES_TOKEN", raising=False)
+    assert cli.main(["delete", "--app", "test2", "--confirm", "test2"]) == 0
 
 
 def test_the_name_must_be_typed_twice(monkeypatch, capsys):

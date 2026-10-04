@@ -26,7 +26,7 @@ GENERATOR = "training-environment-app-creator"
 class Removal:
     what: str  # repository | image | spec
     name: str
-    result: str  # deleted | would delete | not found | kept | failed
+    result: str  # deleted | would delete | not found | kept | by hand | failed
     detail: str = ""
 
 
@@ -41,29 +41,22 @@ def _manifest(gh: GitHub, full_name: str, branch: str) -> dict | None:
 
 
 def _image(gh: GitHub, org: str, package: str, dry_run: bool) -> Removal:
-    """Delete the image of a repository, which outlives the repository."""
+    """Delete the image of a repository, which outlives the repository.
+
+    GitHub's API for images only accepts classic personal access tokens: a
+    GitHub App is refused, and cannot even see whether an image exists. Then
+    the image is left to delete by hand."""
     image = f"ghcr.io/{org}/{package}"
     settings = f"https://github.com/orgs/{org}/packages/container/{package}/settings"
-    if dry_run:
-        status, _ = gh.request("GET", f"/orgs/{org}/packages/container/{package}")
-        if status == 200:
-            return Removal("image", image, "would delete")
-        if status == 404:
-            return Removal("image", image, "not found")
-        return Removal("image", image, "kept", f"the app creator cannot see images; check [its settings]({settings})")
-    status, payload = gh.request("DELETE", f"/orgs/{org}/packages/container/{package}")
-    if status == 204:
-        return Removal("image", image, "deleted")
+    status, payload = gh.request("GET" if dry_run else "DELETE", f"/orgs/{org}/packages/container/{package}")
+    if status == (200 if dry_run else 204):
+        return Removal("image", image, "would delete" if dry_run else "deleted")
     if status == 404:
         return Removal("image", image, "not found")
+    if status in (401, 403):
+        return Removal("image", image, "by hand", f"from [its settings]({settings}), under *Danger Zone*")
     message = payload.get("message") if isinstance(payload, dict) else payload
-    return Removal(
-        "image",
-        image,
-        "failed",
-        f"GitHub would not let the app creator delete it ({status}: {message}); delete it from "
-        f"[its settings]({settings}), under *Danger Zone*",
-    )
+    return Removal("image", image, "failed", f"{status}: {message}; delete it from [its settings]({settings})")
 
 
 def delete_app(
@@ -100,8 +93,11 @@ def delete_app(
                     message = payload.get("message") if isinstance(payload, dict) else payload
                     removals.append(Removal("repository", full, "failed", f"{status}: {message}"))
                     log(f"could not delete {full}: {status}: {message}")
-        # the image, even when its repository is already gone
+        # the image, even when its repository is already gone; though then,
+        # with no way to see images, there is no telling whether it left one
         removal = _image(packages or gh, org, repo_name.lower(), dry_run)
+        if removal.result == "by hand" and repo is None:
+            continue
         removals.append(removal)
         log(f"{removal.result}: {removal.name}")
 
@@ -132,15 +128,19 @@ _RESULTS = {
     "would delete": "would be deleted",
     "not found": "not found",
     "kept": ":shield: kept",
+    "by hand": ":point_right: delete it by hand",
     "failed": ":x: not deleted",
 }
 
 
 def markdown(name: str, removals: list[Removal], dry_run: bool) -> str:
+    by_hand = [r for r in removals if r.result == "by hand"]
     if dry_run:
         head = f"## Dry run: what deleting the {name} app would do"
     elif any(r.result == "failed" for r in removals):
         head = f"## :warning: The {name} app is partly deleted"
+    elif by_hand:
+        head = f"## Deleted the {name} app, apart from its images"
     else:
         head = f"## Deleted the {name} app"
     lines = [head, "", "| | | |", "|---|---|---|"]
@@ -150,6 +150,13 @@ def markdown(name: str, removals: list[Removal], dry_run: bool) -> str:
             thing = f"[`{r.name}`](https://github.com/{r.name})"
         result = _RESULTS.get(r.result, r.result) + (f": {r.detail}" if r.detail else "")
         lines.append(f"| {r.what.capitalize()} | {thing} | {result} |")
+    if by_hand:
+        lines += [
+            "",
+            "GitHub only lets a personal access token delete images, not the app creator's GitHub App. "
+            "To have this workflow delete them too, save a classic personal access token with the "
+            "`delete:packages` and `read:packages` scopes as the secret `APP_CREATOR_PACKAGES_TOKEN`.",
+        ]
     if not dry_run and any(r.result == "deleted" for r in removals):
         lines += [
             "",
