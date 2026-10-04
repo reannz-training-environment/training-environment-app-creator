@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import itertools
+import json
 import re
 import subprocess
 from urllib.parse import parse_qs, urlparse
@@ -144,6 +145,11 @@ class FakeGitHub(publish.GitHub):
         if (r := m(rf"/repos/{REPO}/issues/(\d+)")) and method == "PATCH":
             self.issues.setdefault(int(r.group(1)), {"comments": []})["state"] = data["state"]
             return 200, {}
+        if (r := m(rf"/repos/{REPO}/issues/(\d+)")) and method == "GET":
+            return 200, self.issue_payloads[int(r.group(1))]
+        if r := m(rf"/repos/{REPO}/collaborators/([^/]+)/permission"):
+            permission = getattr(self, "permissions", {}).get(r.group(1), "read")
+            return 200, {"permission": permission}
         if r := m(rf"/repos/{REPO}/collaborators/(.+)"):
             return (204, None) if r.group(1) in self.members else (404, None)
         raise AssertionError(f"unexpected call {method} {path}")
@@ -166,8 +172,8 @@ def event(number, spec, user="alice", association="MEMBER", action="opened", lab
     return payload
 
 
-def handle(gh, payload, schema, defaults):
-    return request.handle(payload, REPO, gh, schema, defaults, log=lambda m: None)
+def handle(gh, payload, schema, defaults, **kwargs):
+    return request.handle(payload, REPO, gh, schema, defaults, log=lambda m: None, **kwargs)
 
 
 # ------------------------------------------------------------------ reading
@@ -351,9 +357,80 @@ def test_outsiders_wait_for_a_maintainer(schema, defaults):
     assert len(gh.pulls) == 1
 
 
-def test_members_whose_membership_github_hides_are_trusted(schema, defaults):
+def test_collaborators_whose_membership_github_hides_are_trusted(schema, defaults):
     gh = FakeGitHub(members=("carol",))
     assert handle(gh, event(12, spec_text(), user="carol", association="CONTRIBUTOR"), schema, defaults).startswith("pull request")
+
+
+class Org(publish.GitHub):
+    """What a token that can read the organisation's members sees."""
+
+    def __init__(self, members):
+        super().__init__("members-token")
+        self.members = members
+
+    def request(self, method, path, data=None):
+        login = path.rsplit("/", 1)[1]
+        assert path == f"/orgs/org/members/{login}"
+        return (204, None) if login in self.members else (404, None)
+
+
+def test_private_members_reviewers_and_writers_are_trusted(schema, defaults):
+    # GitHub reports a private member as a CONTRIBUTOR, and the App cannot
+    # see them as a collaborator without the Members permission
+    private = event(13, spec_text(), user="dana", association="CONTRIBUTOR")
+    gh = FakeGitHub(members=())
+    assert handle(gh, private, schema, defaults).startswith("waiting")
+    assert "cannot tell that you are in the organisation" in gh.comments(13)[0]
+    gh = FakeGitHub(members=())
+    assert handle(gh, private, schema, defaults, members=Org({"dana"})).startswith("pull request")
+
+    # the reviewers are trusted from the config alone
+    reviewer = event(14, spec_text(), user="GeoffreyWeal", association="CONTRIBUTOR")
+    assert handle(FakeGitHub(members=()), reviewer, schema, {**defaults, "reviewers": ["geoffreyweal"]}).startswith("pull request")
+
+    # and so is anyone who can write to the repository
+    gh = FakeGitHub(members=())
+    gh.permissions = {"erin": "write", "frank": "read"}
+    assert handle(gh, event(15, spec_text(), user="erin", association="NONE"), schema, defaults).startswith("pull request")
+    assert handle(gh, event(16, spec_text(name="other"), user="frank", association="NONE"), schema, defaults).startswith("waiting")
+
+
+def test_a_maintainer_can_send_any_request_through(schema, defaults):
+    gh = FakeGitHub(members=())
+    retried = {**event(17, spec_text(), user="mallory", association="NONE"), "action": "retried"}
+    assert handle(gh, retried, schema, defaults, approved=True).startswith("pull request")
+
+
+def test_a_request_can_be_tried_again_by_its_number(monkeypatch):
+    from te_app_creator import cli
+
+    gh = FakeGitHub(members=())
+    gh.issue_payloads = {51: event(51, spec_text(), user="mallory", association="NONE")["issue"]}
+    monkeypatch.setattr(cli.publisher, "GitHub", lambda token: gh)
+    monkeypatch.setenv("GITHUB_REPOSITORY", REPO)
+    monkeypatch.setenv("APP_CREATOR_TOKEN", "app-token")
+    monkeypatch.delenv("MEMBERS_TOKEN", raising=False)
+    assert cli.main(["request", "--issue", "51", "--approved"]) == 0
+    assert [pr["head"]["ref"] for pr in gh.pulls.values()] == ["app-request/51"]
+
+
+def test_without_the_app_the_requester_is_told_how_it_gets_picked_up(monkeypatch, tmp_path):
+    from te_app_creator import cli
+
+    gh = FakeGitHub()
+    monkeypatch.setattr(cli.publisher, "GitHub", lambda token: gh)
+    path = tmp_path / "event.json"
+    path.write_text(json.dumps(event(50, spec_text())))
+    monkeypatch.setenv("GITHUB_REPOSITORY", REPO)
+    monkeypatch.setenv("GH_TOKEN", "actions-token")
+    monkeypatch.delenv("APP_CREATOR_TOKEN", raising=False)
+    monkeypatch.setenv("GITHUB_RUN_ID", "123")
+    assert cli.main(["request", "--event", str(path)]) == 1
+    (comment,) = gh.comments(50)
+    assert "cannot act on requests yet" in comment
+    assert f"re-running [this run](https://github.com/{REPO}/actions/runs/123) picks this request up" in comment
+    assert not gh.pulls
 
 
 def test_asking_again_replaces_your_earlier_request(schema, defaults):

@@ -34,6 +34,7 @@ PERMISSIONS = {
     "workflows": "write",  # what it pushes includes GitHub workflows
     "pull_requests": "write",  # open request and update pull requests, merge the update ones
     "issues": "write",  # answer app requests
+    "members": "read",  # see that a requester is in the organisation, even privately
     "metadata": "read",
 }
 

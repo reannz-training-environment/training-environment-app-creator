@@ -8,6 +8,9 @@
 # build, asks the reviewers in config/defaults.yml to approve it. Merging it is
 # the approval: Publish then makes the app.
 #
+# To try a request again, run this workflow by hand with its issue number
+# (Actions, Request, Run workflow); that also approves it.
+#
 # It acts as the app creator's GitHub App, since a pull request opened with
 # GITHUB_TOKEN would start no checks.
 name: Request
@@ -15,21 +18,27 @@ name: Request
 on:
   issues:
     types: [opened, edited, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "The request to try again: its issue number"
+        required: true
 
 permissions:
   contents: read
   issues: write
 
 concurrency:
-  group: request-${{ github.event.issue.number }}
+  group: request-${{ github.event.issue.number || inputs.issue }}
   cancel-in-progress: false
 
 jobs:
   request:
     if: >-
+      github.event_name == 'workflow_dispatch' || (
       github.event.issue.state == 'open' &&
       contains(github.event.issue.body, '### App spec') &&
-      (github.event.action != 'labeled' || github.event.label.name == 'request approved')
+      (github.event.action != 'labeled' || github.event.label.name == 'request approved'))
     runs-on: ubuntu-latest
     steps:
       # main's code, never the request's: the issue only supplies data
@@ -52,8 +61,31 @@ jobs:
           permission-pull-requests: write
           permission-issues: write
 
+      # GitHub hides private members of the organisation from the event, so
+      # their requests look like outsiders'. A token that can read the members
+      # sees them. It needs the App's Members permission; without it, this step
+      # fails and only reviewers and people with write access are recognised.
+      - name: Get a token that can see who is in the organisation
+        id: members-token
+        if: vars.APP_CREATOR_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.APP_CREATOR_CLIENT_ID }}
+          private-key: ${{ secrets.APP_CREATOR_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-members: read
+
       - name: Open or update the pull request
         env:
           APP_CREATOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          MEMBERS_TOKEN: ${{ steps.members-token.outputs.token }}
           GH_TOKEN: ${{ github.token }}
-        run: python -m te_app_creator request --event "${GITHUB_EVENT_PATH}"
+          ISSUE: ${{ inputs.issue }}
+        run: |
+          if [ -n "${ISSUE}" ]; then
+            python -m te_app_creator request --issue "${ISSUE}" --approved
+          else
+            python -m te_app_creator request --event "${GITHUB_EVENT_PATH}"
+          fi

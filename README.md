@@ -80,6 +80,11 @@ Requests from people outside the organisation are not built until a
 maintainer adds the `request approved` label to them. Making a request again
 for the same app replaces the requester's earlier one.
 
+To try a request again (after a hiccup, or once the GitHub App is set up),
+run the **Request** workflow by hand: *Actions*, *Request*, *Run workflow*, with
+the request's issue number. That also approves it. Re-running a failed run of
+the workflow works too.
+
 ### Changing an app
 
 Load the app on the website, change it, and make the request again; or change
@@ -168,7 +173,16 @@ press **Install**.
 The App gets only what the workflows need: Administration (to create the app
 repositories), Contents and Workflows (to push their files, and requests'
 specs here), Pull requests (to open and merge them) and Issues (to answer
-requests), all *read and write*.
+requests), all *read and write*, and the organisation's Members, *read-only*.
+Members lets it recognise requests from people whose membership of the
+organisation is private, which GitHub otherwise reports as outsiders'. Without
+it, only the reviewers and people with write access are recognised. Other
+members' requests then wait for a maintainer's `request approved` label.
+
+An App made before Members was added gets it from its settings: *Permissions &
+events*, *Organization permissions*, *Members: Read-only*, *Save changes*. Then
+accept the change on the installation (the organisation's *GitHub Apps*
+settings show the request).
 
 Instead of the App, a fine-grained personal access token with those
 permissions on all the organisation's repositories can be saved as the secret
