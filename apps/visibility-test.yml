@@ -1,8 +1,0 @@
-# Throwaway: checks whether new images are public now the organisation allows public packages.
-schema_version: 1
-name: visibility-test
-title: Visibility test
-description: Checks what visibility a new image gets; deleted straight after.
-version: 0.1.0
-interfaces:
-  - jupyter
