@@ -8,11 +8,13 @@
 # GitHub keeps deleted repositories for 90 days and deleted images for 30, and
 # an organisation owner can restore them from the organisation's settings.
 #
-# It acts as the app creator's GitHub App. GitHub only lets a personal access
-# token delete images, so without one the run lists them, with links, to
-# delete by hand. A classic personal access token with the delete:packages and
-# read:packages scopes, in the secret APP_CREATOR_PACKAGES_TOKEN, lets it
-# delete them too.
+# It acts as the app creator's GitHub App. GitHub does not let the App delete
+# images, but it does let a repository's own workflows delete the image they
+# published. So before deleting each repository, this adds a workflow to it
+# that deletes its image, runs it, and waits for it. A classic personal access
+# token with the delete:packages and read:packages scopes, in the secret
+# APP_CREATOR_PACKAGES_TOKEN, is used instead when there is one; it can also
+# delete the image of a repository that is already gone.
 name: Delete an app
 
 on:
@@ -58,6 +60,8 @@ jobs:
         env:
           APP_CREATOR_TOKEN: ${{ steps.app-token.outputs.token }}
           PACKAGES_TOKEN: ${{ secrets.APP_CREATOR_PACKAGES_TOKEN }}
+          # follows the app repositories' own workflows, which the App cannot see
+          RUNS_TOKEN: ${{ github.token }}
           APP: ${{ inputs.app }}
           CONFIRM: ${{ inputs.confirm }}
           DRY_RUN: ${{ inputs.dry_run }}

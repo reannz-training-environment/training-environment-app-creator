@@ -109,11 +109,19 @@ GitHub keeps deleted repositories for 90 days and deleted images for 30, and
 an organisation owner can restore them from the organisation's settings in
 that time.
 
-GitHub only lets a personal access token delete images, not a GitHub App. So
-without one, the run lists each image, with a link to its settings, to delete
-by hand under *Danger Zone*. A classic personal access token with the
-`delete:packages` and `read:packages` scopes, saved as the secret
-`APP_CREATOR_PACKAGES_TOKEN`, lets the workflow delete them itself.
+GitHub does not let a GitHub App delete images. It does let a repository's
+own workflows delete the image they published (a GitHub feature still in
+public preview). So before deleting each repository, the workflow adds a small
+*Delete the image* workflow to it, runs it, and waits for it. That commit is
+marked `[skip ci]`, so it doesn't rebuild the image. An image that can't be
+deleted that way is listed, with a link to its settings, to delete by hand
+under *Danger Zone*.
+
+Instead, a classic personal access token with the `delete:packages` and
+`read:packages` scopes, saved as the secret `APP_CREATOR_PACKAGES_TOKEN`, can
+delete the images directly. It also deletes the image of a repository that is
+already gone. A classic token's scopes cover every organisation its owner
+administers, so it is best made by an account that is only in this one.
 
 ### Updating every app
 

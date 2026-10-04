@@ -393,12 +393,15 @@ def cmd_delete(args) -> int:
     defaults = load_defaults()
     creator = os.environ.get("GITHUB_REPOSITORY") or f"{defaults['github_org']}/training-environment-app-creator"
     packages = os.environ.get("PACKAGES_TOKEN")
+    # reads the app repositories' workflow runs, which the GitHub App may not
+    runs = os.environ.get("RUNS_TOKEN") or token
     removals = delete.delete_app(
         args.app,
         defaults,
         creator,
         publisher.GitHub(token),
         packages=publisher.GitHub(packages) if packages else None,
+        runs=publisher.GitHub(runs),
         dry_run=args.dry_run,
         log=lambda m: print(m, file=sys.stderr),
     )
