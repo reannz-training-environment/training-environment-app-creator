@@ -274,29 +274,47 @@ def cmd_comment(args) -> int:
 
 
 def cmd_request(args) -> int:
-    """Turn the app request in an `issues` event into a pull request."""
+    """Turn an app request into a pull request: the one in an `issues` event,
+    or, to try one again, the issue with a given number."""
     repo = os.environ.get("GITHUB_REPOSITORY")
-    event = json.loads(Path(args.event).read_text(encoding="utf-8"))
     app_token = os.environ.get("APP_CREATOR_TOKEN")
     fallback = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-    if not repo or not (app_token or fallback):
-        print("request needs GITHUB_REPOSITORY, and APP_CREATOR_TOKEN or GH_TOKEN", file=sys.stderr)
+    if not repo or not (app_token or fallback) or not (args.event or args.issue):
+        print("request needs --event or --issue, GITHUB_REPOSITORY, and APP_CREATOR_TOKEN or GH_TOKEN", file=sys.stderr)
         return 1
+    if args.event:
+        event = json.loads(Path(args.event).read_text(encoding="utf-8"))
+    else:
+        issue = publisher.GitHub(app_token or fallback).call("GET", f"/repos/{repo}/issues/{args.issue}")
+        event = {"action": "retried", "issue": issue}
     if not app_token:
         # GITHUB_TOKEN can answer, but a pull request it opened would start no checks
         issue = event["issue"]
+        run = os.environ.get("GITHUB_RUN_ID")
+        retry = "re-running this request"
+        if run:
+            server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+            retry = f"re-running [this run]({server}/{repo}/actions/runs/{run})"
         publisher.GitHub(fallback).comment(
             repo,
             issue["number"],
             f"Thanks @{issue['user']['login']}. The app creator cannot act on requests yet: it needs its GitHub "
-            "App, which a maintainer sets up once (see *Setting up* in the README). The request will be picked "
-            "up when this issue is next edited.\n",
+            "App, which a maintainer sets up once (see *Setting up* in the README). Once it is set up, "
+            f"{retry} picks this request up.\n",
             request.MARKER,
         )
         print("::error::No GitHub App token: run `python -m te_app_creator setup-app` (see the README).")
         return 1
+    members = os.environ.get("MEMBERS_TOKEN")
     outcome = request.handle(
-        event, repo, publisher.GitHub(app_token), load_schema(), load_defaults(), log=lambda m: print(m, file=sys.stderr)
+        event,
+        repo,
+        publisher.GitHub(app_token),
+        load_schema(),
+        load_defaults(),
+        log=lambda m: print(m, file=sys.stderr),
+        members=publisher.GitHub(members) if members else None,
+        approved=args.approved,
     )
     print(outcome)
     return 0
@@ -490,7 +508,9 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_comment)
 
     p = sub.add_parser("request", help="turn an app request into a pull request")
-    p.add_argument("--event", required=True, help="the `issues` event, as JSON (GITHUB_EVENT_PATH)")
+    p.add_argument("--event", help="the `issues` event, as JSON (GITHUB_EVENT_PATH)")
+    p.add_argument("--issue", type=int, help="or: the request's issue number, to try it again")
+    p.add_argument("--approved", action="store_true", help="a maintainer asked for it: do not check the requester")
     p.set_defaults(func=cmd_request)
 
     p = sub.add_parser("handoff", help="after a request's test builds: ask for approval, or report the failure")

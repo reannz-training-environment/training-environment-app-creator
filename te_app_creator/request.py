@@ -273,20 +273,48 @@ def _content(gh: GitHub, repo: str, path: str, ref: str) -> tuple[str | None, st
     return base64.b64decode(payload["content"]).decode("utf-8"), payload["sha"]
 
 
-def trusted(gh: GitHub, repo: str, issue: dict) -> bool:
+def trusted(gh: GitHub, repo: str, issue: dict, defaults: dict, members: GitHub | None = None) -> bool:
     """Whether the requester may have their request built without a maintainer
     looking at it first: anyone in the organisation, or anyone at all once a
-    maintainer has labelled the request."""
+    maintainer has labelled the request.
+
+    GitHub hides private organisation membership from the event and from an
+    App that cannot read the organisation's members: a private member's
+    author_association is CONTRIBUTOR or NONE. So this also asks: is the
+    requester a reviewer, can they write to the repository, and, with
+    `members` (a token that can read members), are they in the organisation."""
+    login = issue["user"]["login"]
     if issue.get("author_association") in TRUSTED:
         return True
     if APPROVED_LABEL in {label["name"] for label in issue.get("labels", [])}:
         return True
-    status, _ = gh.request("GET", f"/repos/{repo}/collaborators/{issue['user']['login']}")
+    if login.lower() in {r.lower() for r in defaults.get("reviewers") or []}:
+        return True
+    if members is not None:
+        status, _ = members.request("GET", f"/orgs/{repo.split('/')[0]}/members/{login}")
+        if status == 204:
+            return True
+    status, payload = gh.request("GET", f"/repos/{repo}/collaborators/{login}/permission")
+    if status == 200 and isinstance(payload, dict) and payload.get("permission") in ("admin", "maintain", "write"):
+        return True
+    status, _ = gh.request("GET", f"/repos/{repo}/collaborators/{login}")
     return status == 204
 
 
-def handle(event: dict, repo: str, gh: GitHub, schema: dict, defaults: dict, log=print) -> str:
-    """Turn the request in an `issues` event into a pull request, or say why not."""
+def handle(
+    event: dict,
+    repo: str,
+    gh: GitHub,
+    schema: dict,
+    defaults: dict,
+    log=print,
+    members: GitHub | None = None,
+    approved: bool = False,
+) -> str:
+    """Turn the request in an `issues` event into a pull request, or say why not.
+
+    `approved` skips asking whether to trust the requester: for when a
+    maintainer asked for it, by running the Request workflow by hand."""
     issue = event["issue"]
     number = issue["number"]
     requester = issue["user"]["login"]
@@ -295,12 +323,13 @@ def handle(event: dict, repo: str, gh: GitHub, schema: dict, defaults: dict, log
     if event.get("action") == "labeled" and (event.get("label") or {}).get("name") != APPROVED_LABEL:
         return "only the approval label matters"
 
-    if not trusted(gh, repo, issue):
+    if not approved and not trusted(gh, repo, issue, defaults, members):
         gh.comment(
             repo,
             number,
-            f"Thanks @{requester}! Requests from outside the organisation are checked by a maintainer first: "
-            f"adding the `{APPROVED_LABEL}` label to this issue turns it into a pull request.\n",
+            f"Thanks @{requester}! The app creator cannot tell that you are in the organisation (GitHub "
+            "hides private memberships from it), so a maintainer checks this request first: adding the "
+            f"`{APPROVED_LABEL}` label to this issue turns it into a pull request.\n",
             MARKER,
         )
         return "waiting for a maintainer to approve the request"
