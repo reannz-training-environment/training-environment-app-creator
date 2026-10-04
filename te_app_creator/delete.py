@@ -40,15 +40,20 @@ def _manifest(gh: GitHub, full_name: str, branch: str) -> dict | None:
         return None
 
 
-def _image(gh: GitHub, org: str, package: str, dry_run: bool) -> Removal:
+def _image(packages: GitHub | None, org: str, package: str, dry_run: bool, had_repository: bool) -> Removal | None:
     """Delete the image of a repository, which outlives the repository.
 
-    GitHub's API for images only accepts classic personal access tokens: a
-    GitHub App is refused, and cannot even see whether an image exists. Then
-    the image is left to delete by hand."""
+    GitHub's API for images only works with personal access tokens (classic).
+    A GitHub App's token is told an image it cannot see is "not found", so
+    without such a token (`packages`), the image of a repository being deleted
+    is left to delete by hand, and the image of one already gone is unknown."""
     image = f"ghcr.io/{org}/{package}"
     settings = f"https://github.com/orgs/{org}/packages/container/{package}/settings"
-    status, payload = gh.request("GET" if dry_run else "DELETE", f"/orgs/{org}/packages/container/{package}")
+    if packages is None:
+        if not had_repository:
+            return None
+        return Removal("image", image, "by hand", f"from [its settings]({settings}), under *Danger Zone*")
+    status, payload = packages.request("GET" if dry_run else "DELETE", f"/orgs/{org}/packages/container/{package}")
     if status == (200 if dry_run else 204):
         return Removal("image", image, "would delete" if dry_run else "deleted")
     if status == 404:
@@ -69,7 +74,9 @@ def delete_app(
     log=print,
 ) -> list[Removal]:
     """Delete the app's repositories, their images and its spec, or with
-    dry_run, say what would be deleted."""
+    dry_run, say what would be deleted. `packages` is a token that can delete
+    images: a personal access token (classic); without one, images are left
+    to delete by hand."""
     org = defaults["github_org"]
     removals = []
     for interface in INTERFACES:
@@ -93,13 +100,11 @@ def delete_app(
                     message = payload.get("message") if isinstance(payload, dict) else payload
                     removals.append(Removal("repository", full, "failed", f"{status}: {message}"))
                     log(f"could not delete {full}: {status}: {message}")
-        # the image, even when its repository is already gone; though then,
-        # with no way to see images, there is no telling whether it left one
-        removal = _image(packages or gh, org, repo_name.lower(), dry_run)
-        if removal.result == "by hand" and repo is None:
-            continue
-        removals.append(removal)
-        log(f"{removal.result}: {removal.name}")
+        # the image, even when its repository is already gone
+        removal = _image(packages, org, repo_name.lower(), dry_run, had_repository=repo is not None)
+        if removal is not None:
+            removals.append(removal)
+            log(f"{removal.result}: {removal.name}")
 
     path = f"apps/{name}.yml"
     base = gh.call("GET", f"/repos/{creator_repo}")["default_branch"]
