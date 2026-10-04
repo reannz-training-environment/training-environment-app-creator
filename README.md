@@ -70,9 +70,8 @@ The rest happens by itself:
 6. The app creator follows those builds, checks each image can be pulled the
    way the training environment pulls it, and comments on the pull request,
    telling the requester and whoever merged it, that the app is ready, or what
-   is left. The one thing it cannot do is
-   [make a new image public](#images-must-be-public-once-per-app): that is
-   once per new image, and the comment links to where.
+   is left. New images are [public](#images-must-be-public) from the start;
+   if one is not, the comment says so and links to where to change it.
 7. Add the app to the training environment with the `ood_apps` block from the
    app repository's README.
 
@@ -211,17 +210,18 @@ Instead of the App, a fine-grained personal access token with those
 permissions on all the organisation's repositories can be saved as the secret
 `APP_CREATOR_TOKEN`; Publish uses it, but requests need the App.
 
-### Images must be public, once per app
+### Images must be public
 
-The cluster pulls images from `ghcr.io` without credentials. A new package is
-private even when its repository is public, and GitHub has no API to change
-that. So after each new app's first images are built, someone with admin
-rights opens each one's
+The cluster pulls images from `ghcr.io` without credentials, so they must be
+public. A public app repository's new image is public from the start, as long
+as the organisation allows public packages: *Settings*, *Packages*, *Package
+creation*, with **Public** ticked (it is). With public packages not allowed,
+or for a private app repository, a new image starts private, and GitHub has no
+API to change that. Then someone with admin rights opens its
 `https://github.com/orgs/reannz-training-environment/packages/container/<repository>/settings`
-and uses *Change visibility* to make it public. The app creator's comment on
-the merged pull request says which images are still private and links to each.
-Each app's build workflow also warns until its image is public. Later versions
-of an app stay public.
+and uses *Change visibility*. The app creator's comment on the merged pull
+request says which images are private and links to each, and each app's build
+workflow warns until its image is public.
 
 ### Who approves
 

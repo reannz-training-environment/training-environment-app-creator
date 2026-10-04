@@ -148,10 +148,11 @@ def markdown(items: list[dict], mentions: list[str]) -> str:
     if private:
         lines += [
             "",
-            "New images on ghcr.io start private, and GitHub cannot make them public automatically; the "
-            "training environment only pulls public images. Once for each image marked private: open "
-            "*make it public*, choose **Change visibility** under *Danger Zone*, then **Public**, and type "
-            "the image's name to confirm. Later versions of the app stay public.",
+            "The training environment only pulls public images. A new image starts private when the "
+            "organisation does not allow public packages (*Settings*, *Packages*, *Package creation*), or "
+            "when its repository is private, and GitHub cannot change that automatically. For each image "
+            "marked private: open *make it public*, choose **Change visibility** under *Danger Zone*, then "
+            "**Public**, and type the image's name to confirm. Later versions of the app stay public.",
         ]
     if trouble:
         lines += [
