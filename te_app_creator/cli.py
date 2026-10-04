@@ -8,6 +8,7 @@
   handoff --pr N ...        after a request's test builds: ask for approval
   publish SPEC [...]        create the repositories, or update them
   ready REPORT              wait for the released images, and say if they are ready
+  delete --app NAME ...     delete an app's repositories, images and spec
   setup-app                 make the GitHub App the workflows act as
 """
 
@@ -375,6 +376,39 @@ def cmd_ready(args) -> int:
     return 0 if all(i["state"] == "built" for i in items) else 1
 
 
+def cmd_delete(args) -> int:
+    """Delete an app's repositories, their images and its spec."""
+    from . import delete
+
+    if args.app != args.confirm:
+        print(f"The names do not match ({args.app!r} and {args.confirm!r}): type the app's name twice.", file=sys.stderr)
+        return 1
+    if not request.NAME.match(args.app):
+        print(f"{args.app!r} is not an app name: lower case letters, digits and single hyphens.", file=sys.stderr)
+        return 1
+    token = _token()
+    if not token:
+        print("delete needs APP_CREATOR_TOKEN (or GH_TOKEN): a token that can delete repositories", file=sys.stderr)
+        return 1
+    defaults = load_defaults()
+    creator = os.environ.get("GITHUB_REPOSITORY") or f"{defaults['github_org']}/training-environment-app-creator"
+    packages = os.environ.get("PACKAGES_TOKEN")
+    removals = delete.delete_app(
+        args.app,
+        defaults,
+        creator,
+        publisher.GitHub(token),
+        packages=publisher.GitHub(packages) if packages else None,
+        dry_run=args.dry_run,
+        log=lambda m: print(m, file=sys.stderr),
+    )
+    text = delete.markdown(args.app, removals, args.dry_run)
+    print(text)
+    if args.markdown:
+        Path(args.markdown).write_text(text, encoding="utf-8")
+    return 1 if any(r.result == "failed" for r in removals) else 0
+
+
 def cmd_setup_app(args) -> int:
     from . import setup_app
 
@@ -536,6 +570,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--timeout-minutes", type=float, default=120)
     p.add_argument("--markdown", help="also write the report to this file")
     p.set_defaults(func=cmd_ready)
+
+    p = sub.add_parser("delete", help="delete an app: its repositories, their images and its spec")
+    p.add_argument("--app", required=True, help="the app's name")
+    p.add_argument("--confirm", required=True, help="the app's name again")
+    p.add_argument("--dry-run", action="store_true", help="only say what would be deleted")
+    p.add_argument("--markdown", help="also write the report to this file")
+    p.set_defaults(func=cmd_delete)
 
     p = sub.add_parser("setup-app", help="make the GitHub App the workflows act as (once, as an organisation owner)")
     p.add_argument("--org", help="default: github_org in config/defaults.yml")

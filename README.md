@@ -97,6 +97,24 @@ Files that maintainers add to an app repository by hand are left alone by
 updates; edits to generated files are replaced, which the update pull request
 shows.
 
+### Deleting an app
+
+Run the **Delete an app** workflow: *Actions*, *Delete an app*, *Run workflow*,
+typing the app's name twice. It deletes the app's repositories and their
+images, and its spec in `apps/`. Tick *dry run* first to see what it would
+delete. It only deletes repositories the app creator made for that app; one
+it did not make is left alone, with its image.
+
+GitHub keeps deleted repositories for 90 days and deleted images for 30, and
+an organisation owner can restore them from the organisation's settings in
+that time.
+
+GitHub only lets a personal access token delete images, not a GitHub App. So
+without one, the run lists each image, with a link to its settings, to delete
+by hand under *Danger Zone*. A classic personal access token with the
+`delete:packages` and `read:packages` scopes, saved as the secret
+`APP_CREATOR_PACKAGES_TOKEN`, lets the workflow delete them itself.
+
 ### Updating every app
 
 Pins (code-server, Lmod, the GPU emulator, kubectl, ...) live in
@@ -232,12 +250,14 @@ a `--dry-run`.
 | `te_app_creator/request.py` | turns a request issue into a pull request, and hands it over for approval |
 | `te_app_creator/publish.py` | creates repositories, or updates them through pull requests |
 | `te_app_creator/ready.py` | follows the release builds, and checks the images can be pulled |
+| `te_app_creator/delete.py` | deletes an app's repositories, images and spec |
 | `te_app_creator/setup_app.py` | makes the GitHub App |
 | `te_app_creator/templates/` | the app files: `common/` for every interface, then `jupyter/`, `rstudio/`, `codeserver/` |
 | `.github/ISSUE_TEMPLATE/app-request.yml` | the request form the website fills in |
 | `.github/workflows/request.yml` | turns requests into pull requests |
 | `.github/workflows/validate.yml` | tests, test-builds and comments on pull requests; hands requests over |
 | `.github/workflows/publish.yml` | publishes merged specs, and says when their images are ready |
+| `.github/workflows/delete.yml` | deletes an app, run by hand |
 
 Every generated repository records what it was generated from in
 `.app-creator.json`. Publish only updates repositories that have one, so it
@@ -254,5 +274,5 @@ never overwrites a repository it did not make.
   itself, as `provision_data_scrnaseq` does.
 * An app's name cannot change once its repositories exist: a new name makes new
   repositories.
-* Removing an interface from a spec, or deleting a spec, leaves its
-  repositories in place.
+* Removing an interface from a spec, or deleting a spec by hand, leaves its
+  repositories in place; the *Delete an app* workflow removes them all.
