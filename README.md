@@ -8,11 +8,12 @@ A trainer fills in the
 [app creator website](https://reannz-training-environment.github.io/training-environment-app-creator-website/):
 a name, the interfaces (JupyterLab, RStudio, VS Code), the HPC features to
 emulate (GPUs, Slurm, environment modules), the data and the software. They
-press one button, and the app creator does the rest up to one approval: it
-opens a pull request here adding `apps/<name>.yml` and test-builds the app.
-Then it asks a maintainer to approve it. Merging the pull request is the
-approval. After it, each interface becomes its own repository in this
-organisation, and its image is built and released:
+press one button, and the app creator does the rest, with a maintainer
+deciding twice. A maintainer first accepts the request. The app creator then
+opens a pull request here adding `apps/<name>.yml`, test-builds the app, and
+asks for a review. Merging the pull request is the approval: each interface
+becomes its own repository in this organisation, and its image is built and
+released:
 
 ```text
 training-environment-jupyter-<name>-app
@@ -49,37 +50,41 @@ the app creator. That is all. Signing in needs the website's
 Without it, GitHub opens with the request already filled in, for you to press
 **Create**.
 
-The rest happens by itself:
+Then:
 
-1. The **Request** workflow checks the spec, commits it as `apps/<name>.yml`
+1. **A maintainer accepts the request**, by adding the `request approved`
+   label to it; the reviewers in [`config/defaults.yml`](config/defaults.yml)
+   are asked to. Nothing is built before that.
+2. The **Request** workflow checks the spec, commits it as `apps/<name>.yml`
    on the branch `app-request/<issue>`, opens a pull request, and comments on
    the request with its progress. A change to an existing app is given the
    next version if it did not raise the version itself, since only a new
    version is released.
-2. The **Validate** workflow tests the spec, builds the image of every
+3. The **Validate** workflow tests the spec, builds the image of every
    interface (each image runs a smoke test of every feature it has), and
    comments with the repositories that merging will create or update, and
    [how much space each needs](#how-much-space-an-app-needs).
-3. Once every image builds, the `reviewers` in
+4. Once every image builds, the `reviewers` in
    [`config/defaults.yml`](config/defaults.yml) are asked to review the pull
    request. If an image does not build, the requester is told instead.
-4. **A maintainer approves it, by merging the pull request.** This is the one
-   step that waits for a person.
-5. The **Publish** workflow creates the repositories (or updates them, merging
+5. **A maintainer approves it, by merging the pull request.**
+6. The **Publish** workflow creates the repositories (or updates them, merging
    their update pull requests itself), and comments with links to them. Each
    repository's own workflows release `v<version>` and build its image.
-6. The app creator follows those builds, checks each image can be pulled the
+7. The app creator follows those builds, checks each image can be pulled the
    way the training environment pulls it, and comments on the pull request,
    telling the requester and whoever merged it, that the app is ready, or what
    is left. New images are [public](#images-must-be-public) from the start;
    if one is not, the comment says so and links to where to change it.
-7. Add the app to the training environment with the `ood_apps` block from the
+8. Add the app to the training environment with the `ood_apps` block from the
    app repository's README.
 
-Requests from members of the organisation and its outside collaborators are
-built straight away. Anyone else's wait until a maintainer adds the
-`request approved` label to them. Making a request again for the same app
-replaces the requester's earlier one.
+Every request waits for a maintainer to accept it, whoever made it. To build
+requests from members of the organisation and its outside collaborators
+straight away, set `request_approval: outsiders` in
+[`config/defaults.yml`](config/defaults.yml): then only other people's wait
+for the label. Making a request again for the same app replaces the
+requester's earlier one.
 
 To try a request again (after a hiccup, or once the GitHub App is set up),
 run the **Request** workflow by hand: *Actions*, *Request*, *Run workflow*, with

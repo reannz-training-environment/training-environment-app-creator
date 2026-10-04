@@ -374,16 +374,25 @@ def handle(
     if event.get("action") == "labeled" and (event.get("label") or {}).get("name") != APPROVED_LABEL:
         return "only the approval label matters"
 
-    if not approved and not trusted(gh, repo, issue, defaults, members):
-        gh.comment(
-            repo,
-            number,
-            f"Thanks @{requester}! Requests are built straight away for members of the organisation and "
-            "its outside collaborators, and the app creator could not find you among them, so a maintainer "
-            f"checks this request first: adding the `{APPROVED_LABEL}` label to this issue turns it into a "
-            "pull request.\n",
-            MARKER,
-        )
+    labelled = APPROVED_LABEL in {label["name"] for label in issue.get("labels", [])}
+    everyone = defaults.get("request_approval", "outsiders") == "everyone"
+    if not approved and not labelled and (everyone or not trusted(gh, repo, issue, defaults, members)):
+        if everyone:
+            asked = [r for r in defaults.get("reviewers") or [] if r.lower() != requester.lower()]
+            who = ", ".join(f"@{r}" for r in asked) or "A maintainer"
+            text = (
+                f"Thanks @{requester}! A maintainer accepts each request before it is built. {who}: adding "
+                f"the `{APPROVED_LABEL}` label to this issue accepts it, and the app creator then opens its "
+                "pull request and test-builds it.\n"
+            )
+        else:
+            text = (
+                f"Thanks @{requester}! Requests are built straight away for members of the organisation and "
+                "its outside collaborators, and the app creator could not find you among them, so a maintainer "
+                f"checks this request first: adding the `{APPROVED_LABEL}` label to this issue turns it into a "
+                "pull request.\n"
+            )
+        gh.comment(repo, number, text, MARKER)
         return "waiting for a maintainer to approve the request"
 
     owner = repo.split("/")[0]

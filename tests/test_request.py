@@ -15,6 +15,14 @@ from conftest import EXAMPLES
 from te_app_creator import publish, request
 
 REPO = "org/creator"
+
+
+@pytest.fixture
+def defaults(defaults):
+    """Most of these tests are about who is trusted when members and outside
+    collaborators go straight through; test_every_request_waits_* covers
+    the configured default, where every request waits."""
+    return {**defaults, "request_approval": "outsiders"}
 MINIMAL = [p for p in EXAMPLES if p.name == "minimal.yml"][0].read_text()
 
 
@@ -529,3 +537,35 @@ def test_handoff_ignores_other_pull_requests_and_cancelled_runs(schema, defaults
     number = max(gh.pulls)
     assert "nothing to say" in request.handoff(gh, REPO, number, "cancelled", "", defaults)
     assert len(gh.comments(42)) == 1
+
+
+def test_every_request_waits_for_a_maintainer_by_default(schema):
+    from te_app_creator.spec import load_defaults
+
+    config = load_defaults()
+    assert config["request_approval"] == "everyone"
+    config = {**config, "reviewers": ["geoffreyweal"]}
+
+    # even a member's request waits, and the reviewers are asked to accept it
+    gh = FakeGitHub(members=("alice",))
+    member = event(60, spec_text(), user="alice", association="MEMBER")
+    assert handle(gh, member, schema, config) == "waiting for a maintainer to approve the request"
+    assert not gh.pulls
+    (comment,) = gh.comments(60)
+    assert "Thanks @alice! A maintainer accepts each request before it is built." in comment
+    assert "@geoffreyweal: adding the `request approved` label" in comment
+
+    # a reviewer's own request waits too, without asking them about it
+    gh = FakeGitHub()
+    own = event(61, spec_text(), user="geoffreyweal", association="OWNER")
+    assert handle(gh, own, schema, config).startswith("waiting")
+    assert "A maintainer: adding the" in gh.comments(61)[0]
+
+    # the label accepts it: the pull request is opened
+    labelled = event(60, spec_text(), user="alice", association="MEMBER", action="labeled",
+                     labels=["app request", "request approved"], label="request approved")
+    assert handle(gh, labelled, schema, config).startswith("pull request")
+    assert len(gh.pulls) == 1
+
+    # and so does running the Request workflow by hand
+    assert handle(FakeGitHub(), member, schema, config, approved=True).startswith("pull request")

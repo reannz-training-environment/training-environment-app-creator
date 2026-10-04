@@ -1,12 +1,14 @@
 # Turns an app request into a pull request.
 #
 # The app creator website files each request as an issue made with the
-# "Request an app" form. For a request from someone in the organisation, or one
-# a maintainer has labelled "request approved", this checks the spec, commits
-# it as apps/<name>.yml on the branch app-request/<issue number>, and opens a
-# pull request. Validate then test-builds the app's images, and once they all
-# build, asks the reviewers in config/defaults.yml to approve it. Merging it is
-# the approval: Publish then makes the app.
+# "Request an app" form. Once a maintainer has accepted it, by labelling it
+# "request approved", this checks the spec, commits it as apps/<name>.yml on
+# the branch app-request/<issue number>, and opens a pull request. Before
+# then, it asks the reviewers in config/defaults.yml to accept it. (With
+# request_approval: outsiders there, members of the organisation and its
+# outside collaborators need no label.) Validate then test-builds the app's
+# images, and once they all build, asks the reviewers to review it. Merging
+# it is the approval: Publish then makes the app.
 #
 # To try a request again, run this workflow by hand with its issue number
 # (Actions, Request, Run workflow); that also approves it.
