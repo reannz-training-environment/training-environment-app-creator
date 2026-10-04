@@ -120,7 +120,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      # A new package on ghcr.io is private, whatever the repository is, and
+      # A new package on ghcr.io is public only if the organisation allows public
+      # packages and this repository is public; otherwise it is private, and
       # there is no API to change that. The training environment pulls images
       # without credentials, so it can only use a public one.
       - name: The image must be public for the training environment to pull it

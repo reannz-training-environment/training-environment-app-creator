@@ -157,12 +157,13 @@ commands has a wrapper in `/opt/software/bin`, which is at the end of `PATH`.
 
 ## Adding the app to the training environment
 
-The cluster pulls the image without credentials, so it must be public. A new
-package on ghcr.io is private, and GitHub has no API to change that, so once,
-after the first image is built: open the
+The cluster pulls the image without credentials, so it must be public. It is
+public from the start when the organisation allows public packages and this
+repository is public. Otherwise it starts private, and GitHub has no API to
+change that: open the
 [package settings](https://github.com/orgs/{{ org }}/packages/container/{{ repo }}/settings)
-and use *Change visibility* to make it public. The build workflow warns until
-this is done.
+and use *Change visibility* to make it public. The build workflow warns while
+it is private.
 
 Then add this block to `ood_apps` in `vars/ondemand-config.yml` of the
 [training-environment](https://github.com/nesi/training-environment) deployment:
