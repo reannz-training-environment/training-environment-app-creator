@@ -423,7 +423,8 @@ def cmd_setup_app(args) -> int:
     from . import setup_app
 
     defaults = load_defaults()
-    return setup_app.run(args.org or defaults["github_org"], args.repo, args.name, defaults.get("website", ""))
+    name = args.name or ("REANNZ app creator sign-in" if args.sign_in else "REANNZ training app creator")
+    return setup_app.run(args.org or defaults["github_org"], args.repo, name, defaults.get("website", ""), sign_in=args.sign_in)
 
 
 def cmd_publish(args) -> int:
@@ -592,7 +593,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("setup-app", help="make the GitHub App the workflows act as (once, as an organisation owner)")
     p.add_argument("--org", help="default: github_org in config/defaults.yml")
     p.add_argument("--repo", default="training-environment-app-creator")
-    p.add_argument("--name", default="REANNZ training app creator", help="the App's name, unique across GitHub")
+    p.add_argument("--name", help="the App's name, unique across GitHub and at most 34 characters")
+    p.add_argument("--sign-in", action="store_true", help="make the App the website signs people in with instead")
     p.set_defaults(func=cmd_setup_app)
 
     args = ap.parse_args(argv)

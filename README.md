@@ -42,11 +42,12 @@ flowchart LR
 ## Using it
 
 **Asking for an app.** Fill in the website and press **Create pull request**.
-GitHub opens with the request already filled in, as an issue made with the
-*Request an app* form: press **Create**. That is all. (A website on GitHub
-Pages has no server of its own, so the website itself cannot act on GitHub. It
-can if it is given a token, which the website explains; then even the
-**Create** is not needed.)
+The website signs you in with GitHub, and files the request as an issue made
+with the *Request an app* form. The first time, GitHub asks you to authorise
+the app creator. That is all. Signing in needs the website's
+[sign-in helper](https://github.com/reannz-training-environment/training-environment-app-creator-website/blob/main/sign-in/README.md).
+Without it, GitHub opens with the request already filled in, for you to press
+**Create**.
 
 The rest happens by itself:
 
@@ -75,9 +76,10 @@ The rest happens by itself:
 7. Add the app to the training environment with the `ood_apps` block from the
    app repository's README.
 
-Requests from people outside the organisation are not built until a
-maintainer adds the `request approved` label to them. Making a request again
-for the same app replaces the requester's earlier one.
+Requests from members of the organisation and its outside collaborators are
+built straight away. Anyone else's wait until a maintainer adds the
+`request approved` label to them. Making a request again for the same app
+replaces the requester's earlier one.
 
 To try a request again (after a hiccup, or once the GitHub App is set up),
 run the **Request** workflow by hand: *Actions*, *Request*, *Run workflow*, with
@@ -196,10 +198,11 @@ The App gets only what the workflows need: Administration (to create the app
 repositories), Contents and Workflows (to push their files, and requests'
 specs here), Pull requests (to open and merge them) and Issues (to answer
 requests), all *read and write*, and the organisation's Members, *read-only*.
-Members lets it recognise requests from people whose membership of the
-organisation is private, which GitHub otherwise reports as outsiders'. Without
-it, only the reviewers and people with write access are recognised. Other
-members' requests then wait for a maintainer's `request approved` label.
+Members lets it recognise requests from the organisation's outside
+collaborators, and from members whose membership is private, which GitHub
+otherwise reports as outsiders'. Without it, only the reviewers and people
+with write access are recognised. Other members' and outside collaborators'
+requests then wait for a maintainer's `request approved` label.
 
 An App made before Members was added gets it from its settings: *Permissions &
 events*, *Organization permissions*, *Members: Read-only*, *Save changes*. Then
@@ -222,6 +225,17 @@ API to change that. Then someone with admin rights opens its
 and uses *Change visibility*. The app creator's comment on the merged pull
 request says which images are private and links to each, and each app's build
 workflow warns until its image is public.
+
+### Signing in on the website (once)
+
+For the website to file requests itself, it signs people in with a second,
+much smaller GitHub App, and a small helper outside GitHub finishes each
+sign-in. `python -m te_app_creator setup-app --sign-in` makes the App. It may
+only write issues, and is installed on this repository alone. It is public,
+because GitHub only lets members of the organisation sign in through a private
+App. The website's
+[sign-in README](https://github.com/reannz-training-environment/training-environment-app-creator-website/blob/main/sign-in/README.md)
+goes through the rest.
 
 ### Who approves
 

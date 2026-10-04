@@ -365,14 +365,33 @@ def test_collaborators_whose_membership_github_hides_are_trusted(schema, default
 class Org(publish.GitHub):
     """What a token that can read the organisation's members sees."""
 
-    def __init__(self, members):
+    def __init__(self, members, outside=()):
         super().__init__("members-token")
         self.members = members
+        self.outside = list(outside)
 
     def request(self, method, path, data=None):
+        if path.startswith("/orgs/org/outside_collaborators?per_page=100&page="):
+            page = int(path.rsplit("=", 1)[1])
+            return 200, [{"login": login} for login in self.outside[(page - 1) * 100 : page * 100]]
         login = path.rsplit("/", 1)[1]
         assert path == f"/orgs/org/members/{login}"
         return (204, None) if login in self.members else (404, None)
+
+
+def test_outside_collaborators_of_the_organisation_are_trusted(schema, defaults):
+    # a collaborator on one of the organisation's other repositories, found on
+    # the second page of the list
+    outside = [f"someone{i}" for i in range(150)] + ["olive"]
+    request_ = event(18, spec_text(), user="Olive", association="NONE")
+    assert handle(FakeGitHub(members=()), request_, schema, defaults, members=Org(set(), outside)).startswith("pull request")
+    # without a token that can read the organisation's members, they wait
+    assert handle(FakeGitHub(members=()), request_, schema, defaults).startswith("waiting")
+    # and so does anyone else
+    stranger = event(19, spec_text(), user="mallory", association="NONE")
+    gh = FakeGitHub(members=())
+    assert handle(gh, stranger, schema, defaults, members=Org(set(), outside)).startswith("waiting")
+    assert "members of the organisation and its outside collaborators" in gh.comments(19)[0]
 
 
 def test_private_members_reviewers_and_writers_are_trusted(schema, defaults):
@@ -381,7 +400,7 @@ def test_private_members_reviewers_and_writers_are_trusted(schema, defaults):
     private = event(13, spec_text(), user="dana", association="CONTRIBUTOR")
     gh = FakeGitHub(members=())
     assert handle(gh, private, schema, defaults).startswith("waiting")
-    assert "cannot tell that you are in the organisation" in gh.comments(13)[0]
+    assert "could not find you among them" in gh.comments(13)[0]
     gh = FakeGitHub(members=())
     assert handle(gh, private, schema, defaults, members=Org({"dana"})).startswith("pull request")
 

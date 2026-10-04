@@ -308,16 +308,31 @@ def _content(gh: GitHub, repo: str, path: str, ref: str) -> tuple[str | None, st
     return base64.b64decode(payload["content"]).decode("utf-8"), payload["sha"]
 
 
+def _outside_collaborator(members: GitHub, org: str, login: str) -> bool:
+    """Whether someone is an outside collaborator of the organisation: not a
+    member, but a collaborator on one of its repositories."""
+    for page in range(1, 11):
+        status, payload = members.request("GET", f"/orgs/{org}/outside_collaborators?per_page=100&page={page}")
+        if status != 200 or not isinstance(payload, list):
+            return False
+        if login.lower() in {c["login"].lower() for c in payload}:
+            return True
+        if len(payload) < 100:
+            return False
+    return False
+
+
 def trusted(gh: GitHub, repo: str, issue: dict, defaults: dict, members: GitHub | None = None) -> bool:
     """Whether the requester may have their request built without a maintainer
-    looking at it first: anyone in the organisation, or anyone at all once a
-    maintainer has labelled the request.
+    looking at it first: members of the organisation and its outside
+    collaborators, or anyone once a maintainer has labelled the request.
 
     GitHub hides private organisation membership from the event and from an
     App that cannot read the organisation's members: a private member's
     author_association is CONTRIBUTOR or NONE. So this also asks: is the
-    requester a reviewer, can they write to the repository, and, with
-    `members` (a token that can read members), are they in the organisation."""
+    requester a reviewer, can they write to this repository, and, with
+    `members` (a token that can read the organisation's members), are they a
+    member or an outside collaborator of the organisation."""
     login = issue["user"]["login"]
     if issue.get("author_association") in TRUSTED:
         return True
@@ -325,9 +340,10 @@ def trusted(gh: GitHub, repo: str, issue: dict, defaults: dict, members: GitHub 
         return True
     if login.lower() in {r.lower() for r in defaults.get("reviewers") or []}:
         return True
+    org = repo.split("/")[0]
     if members is not None:
-        status, _ = members.request("GET", f"/orgs/{repo.split('/')[0]}/members/{login}")
-        if status == 204:
+        status, _ = members.request("GET", f"/orgs/{org}/members/{login}")
+        if status == 204 or _outside_collaborator(members, org, login):
             return True
     status, payload = gh.request("GET", f"/repos/{repo}/collaborators/{login}/permission")
     if status == 200 and isinstance(payload, dict) and payload.get("permission") in ("admin", "maintain", "write"):
@@ -362,9 +378,10 @@ def handle(
         gh.comment(
             repo,
             number,
-            f"Thanks @{requester}! The app creator cannot tell that you are in the organisation (GitHub "
-            "hides private memberships from it), so a maintainer checks this request first: adding the "
-            f"`{APPROVED_LABEL}` label to this issue turns it into a pull request.\n",
+            f"Thanks @{requester}! Requests are built straight away for members of the organisation and "
+            "its outside collaborators, and the app creator could not find you among them, so a maintainer "
+            f"checks this request first: adding the `{APPROVED_LABEL}` label to this issue turns it into a "
+            "pull request.\n",
             MARKER,
         )
         return "waiting for a maintainer to approve the request"
