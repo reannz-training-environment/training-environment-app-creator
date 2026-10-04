@@ -18,7 +18,7 @@ from typing import Any
 
 import yaml
 
-from . import render
+from . import render, sizes
 from .publish import GitHub
 from .spec import INTERFACES, SpecError, check
 
@@ -173,6 +173,38 @@ def plan(text: str, raw: dict[str, Any], existing: str | None, schema: dict, def
 # ----------------------------------------------------------------- writing
 
 
+def space_summary(reports: list[dict], learners: int = 30) -> list[str]:
+    """The space the app needs, from the test builds' `sizes --json` reports:
+    each image, and the data every learner gets."""
+    reports = sorted(
+        (r for r in reports if r.get("interface") in INTERFACES),
+        key=lambda r: list(INTERFACES).index(r["interface"]),
+    )
+    if not reports:
+        return []
+    columns = " | ".join(INTERFACES[r["interface"]]["label"] for r in reports)
+    on_disk = " | ".join(sizes.human(r["image_bytes"]) for r in reports)
+    download = " | ".join(f"about {sizes.human(r['download_bytes'])}" if r.get("download_bytes") else "not measured" for r in reports)
+    lines = [
+        "**Space needed**, measured by the test builds:",
+        "",
+        f"| | {columns} |",
+        "|---|" + "---|" * len(reports),
+        f"| Image on disk, on each worker node that runs it | {on_disk} |",
+        f"| Image download, to each of those nodes | {download} |",
+        "",
+    ]
+    data = max(r.get("data_bytes") or 0 for r in reports)
+    if data:
+        lines.append(
+            f"Each learner's home directory gets {sizes.human(data)} of data: "
+            f"{sizes.human(learners * data)} for {learners} learners."
+        )
+    else:
+        lines.append("No data is copied into the learners' home directories.")
+    return lines
+
+
 def _status(
     pr: dict | None,
     requester: str,
@@ -180,6 +212,7 @@ def _status(
     defaults: dict,
     reviewers: list[str] = (),
     run_url: str = "",
+    space: list[str] = (),
 ) -> str:
     """The request's status comment: where it is up to, and what happens next."""
     website = defaults.get("website", "")
@@ -205,6 +238,8 @@ def _status(
         "- [ ] The app's repositories are made, and their images built and released",
         "",
     ]
+    if space:
+        lines += [*space, "", f"What each part of the app adds is on [the pull request]({pr['html_url']}).", ""]
     if stage == "failed":
         lines.append(
             "A maintainer will look at what went wrong. You can also change the request "
@@ -424,9 +459,19 @@ def _other_requests(gh: GitHub, repo: str, path: str, branch: str) -> list[dict]
     return found
 
 
-def handoff(gh: GitHub, repo: str, number: int, built: str, run_url: str, defaults: dict, log=print) -> str:
+def handoff(
+    gh: GitHub,
+    repo: str,
+    number: int,
+    built: str,
+    run_url: str,
+    defaults: dict,
+    log=print,
+    space_reports: list[dict] = (),
+) -> str:
     """After a request's images are test-built: ask the reviewers to approve it,
-    or tell the requester an image did not build."""
+    or tell the requester an image did not build. `space_reports` are the
+    test builds' size reports, to tell the requester how much space it needs."""
     pr = gh.call("GET", f"/repos/{repo}/pulls/{number}")
     ref = pr["head"]["ref"]
     match = REQUESTED_BY.search(pr.get("body") or "")
@@ -442,7 +487,8 @@ def handoff(gh: GitHub, repo: str, number: int, built: str, run_url: str, defaul
             status, payload = gh.request("POST", f"/repos/{repo}/pulls/{number}/requested_reviewers", {"reviewers": reviewers})
             if status not in (200, 201):
                 log(f"could not ask {', '.join(reviewers)} to review: HTTP {status}: {payload}")
-        gh.comment(repo, issue, _status(pr, requester, "built", defaults, reviewers), MARKER)
+        space = space_summary(list(space_reports))
+        gh.comment(repo, issue, _status(pr, requester, "built", defaults, reviewers, space=space), MARKER)
         return "asked for approval"
 
     gh.comment(repo, issue, _status(pr, requester, "failed", defaults, reviewers, run_url), MARKER)

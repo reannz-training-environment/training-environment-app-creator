@@ -459,16 +459,36 @@ def test_someone_elses_request_for_the_same_app_is_left_open(schema, defaults):
 # ----------------------------------------------------------------- handoff
 
 
-def test_built_requests_go_to_the_reviewers(schema, defaults):
+MB = 1_000_000
+
+# what the test builds of a JupyterLab and RStudio app measured
+REPORTS = [
+    {"interface": "rstudio", "image_bytes": 4_440 * MB, "download_bytes": 1_580 * MB, "data_bytes": 1_180_000},
+    {"interface": "jupyter", "image_bytes": 2_430 * MB, "download_bytes": 900 * MB, "data_bytes": 1_180_000},
+]
+
+
+def test_built_requests_go_to_the_reviewers_and_say_how_much_space_they_need(schema, defaults):
     gh = FakeGitHub()
     handle(gh, event(40, spec_text()), schema, defaults)
     (number,) = gh.pulls
     defaults = {**defaults, "reviewers": ["geoffreyweal"]}
-    assert request.handoff(gh, REPO, number, "success", "https://run", defaults) == "asked for approval"
+    assert request.handoff(gh, REPO, number, "success", "https://run", defaults, space_reports=REPORTS) == "asked for approval"
     assert gh.reviewers[number] == ["geoffreyweal"]
     (status,) = gh.comments(40)
     assert "- [x] Every image test-builds" in status
     assert "@geoffreyweal has been asked to review it" in status
+    assert "| | JupyterLab | RStudio |" in status
+    assert "| Image on disk, on each worker node that runs it | 2.4 GB | 4.4 GB |" in status
+    assert "| Image download, to each of those nodes | about 900 MB | about 1.6 GB |" in status
+    assert "Each learner's home directory gets 1.2 MB of data: 35 MB for 30 learners." in status
+
+
+def test_the_space_summary_of_an_app_without_data():
+    lines = request.space_summary([{"interface": "codeserver", "image_bytes": 3_000 * MB, "download_bytes": None, "data_bytes": 0}])
+    assert "| Image download, to each of those nodes | not measured |" in lines
+    assert lines[-1] == "No data is copied into the learners' home directories."
+    assert request.space_summary([]) == []
 
 
 def test_a_failed_build_is_reported_to_the_requester(schema, defaults):

@@ -160,16 +160,13 @@ An app needs space in two places:
 * **Its data**, in every learner's home directory: each session copies the
   data in, so the home directory server needs the data's size once per learner.
 
-The website estimates both while the app is described. Data from a GitHub
-repository is sized exactly from the repository's files at the chosen ref, and
-a download from a GitHub release from the release; software is estimated from
-typical sizes measured on real builds.
-
-The Validate workflow then measures every image it builds
-(`python -m te_app_creator sizes`), and the pull request comment gives the
+Both are measured exactly when the Validate workflow test-builds the app's
+images (`python -m te_app_creator sizes`). The pull request comment gives each
 image's download and on-disk size, the data each learner gets, and what each
 part of the app adds: every data source, and every kind of software. Each of
 those is its own Dockerfile step, so this comes from the image's layer history.
+For an app request, the request's status comment also gives the requester the
+totals: each image's size, and the data per learner and for 30 learners.
 
 ## Setting up
 

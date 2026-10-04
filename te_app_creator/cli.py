@@ -328,7 +328,14 @@ def cmd_handoff(args) -> int:
     if not token or not repo:
         print("handoff needs GH_TOKEN (or GITHUB_TOKEN) and GITHUB_REPOSITORY", file=sys.stderr)
         return 1
-    print(request.handoff(publisher.GitHub(token), repo, args.pr, args.built, args.run_url, load_defaults()))
+    reports = []
+    if args.sizes and Path(args.sizes).is_dir():
+        reports = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(Path(args.sizes).glob("*.json"))]
+    print(
+        request.handoff(
+            publisher.GitHub(token), repo, args.pr, args.built, args.run_url, load_defaults(), space_reports=reports
+        )
+    )
     return 0
 
 
@@ -554,6 +561,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--pr", required=True, type=int)
     p.add_argument("--built", required=True, help="how the test builds went: success, failure, cancelled, ...")
     p.add_argument("--run-url", default="", help="the run that built them")
+    p.add_argument("--sizes", help="directory of the test builds' `sizes --json` reports, to say how much space it needs")
     p.set_defaults(func=cmd_handoff)
 
     p = sub.add_parser("publish", help="create or update the app repositories")

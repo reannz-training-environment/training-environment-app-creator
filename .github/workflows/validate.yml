@@ -220,8 +220,9 @@ jobs:
           } > summary.md
           python -m te_app_creator comment --pr "${PR}" --file summary.md
 
-  # An app request goes to the reviewers once all its images build; if one
-  # does not, the requester hears about it on their request.
+  # An app request goes to the reviewers once all its images build, and the
+  # requester hears how much space it needs; if an image does not build, the
+  # requester hears about that instead.
   handoff:
     needs: [check, build]
     if: ${{ !cancelled() && github.event_name == 'pull_request' && startsWith(github.head_ref, 'app-request/') }}
@@ -232,6 +233,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      # what the builds measured
+      - uses: actions/download-artifact@v8
+        if: needs.build.result == 'success'
+        with:
+          pattern: sizes-*
+          merge-multiple: true
+          path: sizes
       - name: Ask for approval, or say what went wrong
         env:
           GH_TOKEN: ${{ github.token }}
@@ -247,4 +255,4 @@ jobs:
           else
             built="${BUILD}"
           fi
-          python -m te_app_creator handoff --pr "${PR}" --built "${built}" --run-url "${RUN_URL}"
+          python -m te_app_creator handoff --pr "${PR}" --built "${built}" --run-url "${RUN_URL}" --sizes sizes
