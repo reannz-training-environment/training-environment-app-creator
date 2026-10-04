@@ -11,6 +11,15 @@ private key back to this program, which puts it straight into the repository's
 Actions secrets (it is never written to disk), and its client ID into a
 variable. Then GitHub's page for installing the App opens: install it on all
 the organisation's repositories, so it can manage the ones it creates.
+
+    python -m te_app_creator setup-app --sign-in
+
+makes the second, much smaller App the website signs people in with, so it
+can file their requests for them. It may only write issues, and is installed
+on this repository alone. It is public, because GitHub only lets members of
+the organisation sign in through a private App, and outside collaborators
+must be able to as well. Its client secret is for the website's sign-in
+helper (see the website's README): it is put on the clipboard, never shown.
 """
 
 from __future__ import annotations
@@ -58,13 +67,47 @@ def manifest(org: str, repo: str, name: str, redirect_url: str, website: str) ->
     }
 
 
-def _form(org: str, manifest_json: str, state: str) -> str:
+# a signed-in person's token may do no more than file and edit issues
+SIGN_IN_PERMISSIONS = {"issues": "write", "metadata": "read"}
+
+
+def sign_in_manifest(name: str, redirect_url: str, website: str) -> dict:
+    return {
+        "name": name,
+        "url": website,
+        "description": (
+            "Signs people in to the training environment app creator website, so it can file their app "
+            "requests for them. It can only write issues."
+        ),
+        # GitHub only lets members of the owning organisation sign in through a
+        # private App; outside collaborators have to be able to as well
+        "public": True,
+        "redirect_url": redirect_url,
+        "callback_urls": [website],
+        "request_oauth_on_install": False,
+        "hook_attributes": {"url": website, "active": False},
+        "default_permissions": SIGN_IN_PERMISSIONS,
+        "default_events": [],
+    }
+
+
+def _to_clipboard(text: str) -> bool:
+    for command in (["pbcopy"], ["wl-copy"], ["xclip", "-selection", "clipboard"], ["clip"]):
+        try:
+            if subprocess.run(command, input=text, text=True, capture_output=True).returncode == 0:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _form(org: str, manifest_json: str, state: str, what: str = "GitHub App") -> str:
     action = f"https://github.com/organizations/{org}/settings/apps/new?state={state}"
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>App creator setup</title></head>
 <body style="font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem">
 <h1>Setting up the app creator</h1>
-<p>Taking you to GitHub to create the app creator's GitHub App for <strong>{html.escape(org)}</strong>.
+<p>Taking you to GitHub to create the app creator's {html.escape(what)} for <strong>{html.escape(org)}</strong>.
 There, check the name and press <strong>Create GitHub App</strong>.</p>
 <form id="f" method="post" action="{html.escape(action)}">
 <input type="hidden" name="manifest" value="{html.escape(manifest_json)}">
@@ -113,7 +156,7 @@ def _convert(code: str) -> dict:
     raise SystemExit(f"GitHub did not hand over the App's credentials: {last}")
 
 
-def run(org: str, repo: str, name: str, website: str, timeout: float = 900) -> int:
+def run(org: str, repo: str, name: str, website: str, sign_in: bool = False, timeout: float = 900) -> int:
     _gh("auth", "status")
     state = secrets.token_urlsafe(16)
     received: dict[str, str] = {}
@@ -145,8 +188,9 @@ def run(org: str, repo: str, name: str, website: str, timeout: float = 900) -> i
     server = HTTPServer(("127.0.0.1", 0), Handler)
     server.timeout = 1
     port = server.server_address[1]
-    spec = manifest(org, repo, name, f"http://127.0.0.1:{port}/created", website)
-    page["form"] = _form(org, json.dumps(spec), state)
+    redirect = f"http://127.0.0.1:{port}/created"
+    spec = sign_in_manifest(name, redirect, website) if sign_in else manifest(org, repo, name, redirect, website)
+    page["form"] = _form(org, json.dumps(spec), state, "sign-in App" if sign_in else "GitHub App")
     start_url = f"http://127.0.0.1:{port}/"
     print(f"Opening {start_url} to create the GitHub App on GitHub. If no browser opens, open it yourself.")
     webbrowser.open(start_url)
@@ -161,12 +205,27 @@ def run(org: str, repo: str, name: str, website: str, timeout: float = 900) -> i
 
     app = _convert(received["code"])
     full = f"{org}/{repo}"
+    install = f"{app['html_url']}/installations/new"
+    if sign_in:
+        print(f"Created the sign-in App {app['slug']} ({app['html_url']}).")
+        print(f"Its client ID, for the website's SIGN_IN settings and the helper's CLIENT_ID: {app['client_id']}")
+        if _to_clipboard(app["client_secret"]):
+            print("Its client secret is on your clipboard: paste it into the helper's CLIENT_SECRET secret now.")
+        else:
+            print(f"Make its client secret on https://github.com/organizations/{org}/settings/apps/{app['slug']} "
+                  "(Generate a new client secret), and paste it into the helper's CLIENT_SECRET secret.")
+        print(
+            f"\nLast step: install it. Opening {install}\n"
+            f"Choose {org}, then 'Only select repositories' and {repo}, and press Install."
+        )
+        webbrowser.open(install)
+        return 0
+
     _gh("variable", "set", CLIENT_ID_VARIABLE, "--repo", full, "--body", app["client_id"])
     _gh("secret", "set", KEY_SECRET, "--repo", full, input=app["pem"])
     print(f"Created the GitHub App {app['slug']} ({app['html_url']}).")
     print(f"Stored its client ID in the {CLIENT_ID_VARIABLE} variable and its private key in the {KEY_SECRET} secret of {full}.")
 
-    install = f"{app['html_url']}/installations/new"
     print(
         f"\nLast step: install it. Opening {install}\n"
         f"Choose {org}, then 'All repositories', so it can manage the repositories it creates, and press Install."
