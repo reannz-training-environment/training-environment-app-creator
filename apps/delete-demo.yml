@@ -1,8 +1,0 @@
-# Throwaway: checks the Delete an app workflow, which deletes it straight after.
-schema_version: 1
-name: delete-demo
-title: Delete demo
-description: Checks the Delete an app workflow; deleted straight after.
-version: 0.1.0
-interfaces:
-  - jupyter
