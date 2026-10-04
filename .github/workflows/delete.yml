@@ -1,0 +1,69 @@
+# Deletes an app: its repositories, their images, and its spec in apps/.
+#
+# Run it by hand: Actions, "Delete an app", Run workflow, typing the app's name
+# twice. Only repositories the app creator made for that app are deleted; a
+# repository it did not make is left alone, with its image. Tick "dry run" to
+# see what would go first.
+#
+# GitHub keeps deleted repositories for 90 days and deleted images for 30, and
+# an organisation owner can restore them from the organisation's settings.
+#
+# It acts as the app creator's GitHub App. If the App cannot delete images,
+# the run lists them, with links, to delete by hand; a classic personal access
+# token with the delete:packages and read:packages scopes, in the secret
+# APP_CREATOR_PACKAGES_TOKEN, lets it delete them too.
+name: Delete an app
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: "The app's name, as in apps/<name>.yml"
+        required: true
+      confirm:
+        description: "The app's name again: its repositories, images and spec are deleted"
+        required: true
+      dry_run:
+        description: "Only say what would be deleted"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    # never at the same time as a publish
+    concurrency:
+      group: publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Get a token from the GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.APP_CREATOR_CLIENT_ID }}
+          private-key: ${{ secrets.APP_CREATOR_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Delete the app
+        env:
+          APP_CREATOR_TOKEN: ${{ steps.app-token.outputs.token }}
+          PACKAGES_TOKEN: ${{ secrets.APP_CREATOR_PACKAGES_TOKEN }}
+          APP: ${{ inputs.app }}
+          CONFIRM: ${{ inputs.confirm }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=(--app "${APP}" --confirm "${CONFIRM}" --markdown report.md)
+          [ "${DRY_RUN}" = "true" ] && args+=(--dry-run)
+          status=0
+          python -m te_app_creator delete "${args[@]}" || status=$?
+          [ -f report.md ] && cat report.md >> "$GITHUB_STEP_SUMMARY"
+          exit "${status}"

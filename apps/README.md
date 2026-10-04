@@ -11,5 +11,6 @@ Merging a new or changed file here creates or updates the app's repositories,
 one per interface: `training-environment-<interface>-<name>-app`, and builds
 and releases their images.
 
-Deleting a file here does not delete anything: the app's repositories stay
-until someone archives or deletes them.
+To delete an app, run the **Delete an app** workflow (*Actions*, *Delete an
+app*, *Run workflow*): it deletes the app's file here, its repositories and
+their images. Deleting a file here by hand deletes nothing else.
