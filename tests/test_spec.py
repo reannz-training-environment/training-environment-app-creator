@@ -6,7 +6,7 @@ import copy
 
 import pytest
 
-from te_app_creator.spec import SpecError, check, conda_package_name, rstudio_base
+from te_app_creator.spec import SpecError, check, conda_package_name, gpu_build, rstudio_base
 
 MINIMAL = {"schema_version": 1, "name": "intro-python", "title": "Intro to Python", "interfaces": ["jupyter"]}
 
@@ -218,3 +218,71 @@ def test_the_version_test_builds_are_valid(schema, defaults):
     assert len(builds) >= 18
     for path in builds:
         load(path, schema, defaults)
+
+
+@pytest.mark.parametrize(
+    "box, line, build",
+    [
+        ("pip", "tensorflow[and-cuda]==2.20", ("cuda", "tensorflow")),
+        ("pip", "tensorflow", ("cpu", "")),
+        ("pip", "tensorflow-cpu", ("cpu", "")),
+        ("pip", "jax[cuda12]", ("cuda", "jax")),
+        ("pip", "jax", ("cpu", "")),
+        ("pip", "cupy-cuda12x", ("cuda", "numpy")),
+        ("pip", "Faiss_GPU_cu12", ("cuda", "faiss-cpu")),
+        ("pip", "faiss-cpu", ("cpu", "")),
+        ("pip", "cudf-cu12", ("cuda", "")),
+        ("pip", "nvidia-cudnn-cu12", ("cuda", "")),
+        ("pip", "nvidia-ml-py", None),
+        ("pip", "torch>=2", ("cuda", "")),
+        ("pip", "torch==2.9.0+cpu", ("cpu", "")),
+        ("pip", "numpy", None),
+        ("conda", "pytorch", ("cpu", "")),
+        ("conda", "conda-forge::pytorch=2.5=*cuda*", ("cuda", "")),
+        ("conda", "cuda-nvcc", ("cuda", "")),
+        ("conda", "samtools", None),
+        ("cran", "torch", ("cpu", "")),
+        ("apt", "nvidia-cuda-toolkit", ("cuda", "")),
+        ("apt", "htop", None),
+    ],
+)
+def test_gpu_and_cpu_builds_are_recognised(box, line, build):
+    assert gpu_build(box, line) == build
+
+
+def gpu_app(schema, defaults, gpu=True, **software):
+    raw = spec_with(interfaces=["jupyter", "rstudio"], software=software)
+    if gpu is not None:
+        raw["features"] = {"gpu": gpu if isinstance(gpu, dict) else {"enabled": gpu}}
+    return check(raw, "t.yml", schema, defaults).warnings
+
+
+def test_with_emulated_gpus_the_requester_learns_which_builds_cannot_use_them(schema, defaults):
+    warnings = " | ".join(gpu_app(schema, defaults, pip=["cupy-cuda12x", "tensorflow"], conda={"packages": ["pytorch"]},
+                                  apt=["nvidia-cuda-toolkit"], r={"cran": ["torch"]}))
+    assert "`cupy-cuda12x` is built for real (CUDA) GPUs. The emulated GPUs have no CUDA" in warnings
+    assert "`numpy` is its CPU counterpart" in warnings
+    assert "`tensorflow` is a CPU build: it runs on the CPU, and the emulated GPUs will not see it" in warnings
+    assert "`pytorch` is a CPU build" in warnings and "use features.gpu.pytorch" in warnings
+    assert "`nvidia-cuda-toolkit` is NVIDIA's driver or CUDA software" in warnings
+    assert "software.r.cran: `torch` is a CPU build" in warnings
+
+
+def test_torch_with_emulated_gpus_should_be_their_own(schema, defaults):
+    assert any("comes with the emulated GPUs already" in w for w in gpu_app(schema, defaults, pip=["torch"]))
+    without = gpu_app(schema, defaults, gpu={"enabled": True, "pytorch": False}, pip=["torch"])
+    assert any("Turn on features.gpu.pytorch" in w for w in without)
+
+
+def test_without_gpus_only_cuda_builds_are_mentioned(schema, defaults):
+    warnings = gpu_app(schema, defaults, gpu=None, pip=["tensorflow", "jax[cuda12]", "torch"])
+    assert not any("tensorflow`" in w for w in warnings)
+    assert any("`jax[cuda12]` is built for CUDA GPUs, and the app has no GPUs" in w and "`jax` is its CPU counterpart" in w for w in warnings)
+    assert any("`torch` from PyPI is the build for CUDA GPUs" in w for w in warnings)
+
+
+def test_emulated_gpus_with_nothing_to_use_them(schema, defaults):
+    warnings = gpu_app(schema, defaults, gpu={"enabled": True, "pytorch": False, "numba": False}, pip=["numba"])
+    assert any("`numba` has no CUDA here" in w for w in warnings)
+    assert any("no code runs on the emulated GPUs" in w for w in warnings)
+    assert not any("no code runs" in w for w in gpu_app(schema, defaults))

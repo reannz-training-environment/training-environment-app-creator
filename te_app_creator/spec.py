@@ -189,6 +189,170 @@ def _version_errors(app: dict[str, Any]) -> list[str]:
     return errors
 
 
+# Programs that have builds for real (CUDA) GPUs and for CPUs. The emulated
+# GPUs have no CUDA: code runs on them only through the emulator's PyTorch and
+# Numba's CUDA simulator (features.gpu). A CUDA build cannot use them, and a CPU
+# build runs without them, so the requester is told which they asked for.
+_PIP_LINE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[([^\]]*)\])?(.*)$")
+_CUDA_PIP = {
+    "tensorflow-gpu": "tensorflow",
+    "onnxruntime-gpu": "onnxruntime",
+    "paddlepaddle-gpu": "paddlepaddle",
+    "pycuda": "",
+    "cuda-python": "",
+    "numba-cuda": "",
+    "dask-cuda": "",
+    "triton": "",
+    "bitsandbytes": "",
+    "flash-attn": "",
+    "xformers": "",
+    "vllm": "",
+}
+_CPU_PIP = {"tensorflow-cpu", "onnxruntime", "faiss-cpu", "paddlepaddle", "mxnet", "jaxlib"}
+_CUDA_CONDA = {
+    "pytorch-gpu", "tensorflow-gpu", "cudatoolkit", "cudnn", "nccl", "cupy", "cupy-core", "faiss-gpu",
+    "cudf", "cuml", "cugraph", "rapids", "pycuda", "cuda-python",
+}
+_CPU_CONDA = {"pytorch", "pytorch-cpu", "tensorflow", "tensorflow-cpu", "jax", "jaxlib", "faiss-cpu", "cpuonly"}
+TORCH = {"torch", "torchvision", "torchaudio"}
+
+
+def _normal(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name.lower())
+
+
+def gpu_build(box: str, line: str) -> tuple[str, str] | None:
+    """("cuda" or "cpu", its CPU counterpart) for a package line of a box
+    (pip, conda, cran or apt) that names a build for CUDA GPUs or a CPU build
+    of a program that has both; None for anything else."""
+    if box == "pip":
+        match = _PIP_LINE.match(line)
+        if not match:
+            return None
+        name = _normal(match.group(1))
+        extras = {_normal(e) for e in (match.group(2) or "").split(",") if e.strip()}
+        rest = match.group(3).lower()
+        if name in TORCH:
+            return ("cpu", "") if "+cpu" in rest else ("cuda", "")
+        if name == "tensorflow":
+            return ("cuda", "tensorflow") if "and-cuda" in extras else ("cpu", "")
+        if name == "jax":
+            return ("cuda", "jax") if any(e.startswith("cuda") for e in extras) else ("cpu", "")
+        if name in _CUDA_PIP:
+            return ("cuda", _CUDA_PIP[name])
+        if name.startswith("cupy"):
+            return ("cuda", "numpy")
+        if name.startswith("faiss-gpu"):
+            return ("cuda", "faiss-cpu")
+        if re.fullmatch(r"mxnet-cu\d+[a-z0-9]*", name):
+            return ("cuda", "mxnet")
+        if name.startswith("tensorrt") or re.fullmatch(r"[a-z0-9-]+-cu1\d", name):
+            return ("cuda", "")
+        # NVIDIA's CUDA libraries; nvidia-ml-py is NVML, which the emulator has
+        if name.startswith("nvidia-") and not name.startswith("nvidia-ml-py"):
+            return ("cuda", "")
+        if name in _CPU_PIP:
+            return ("cpu", "") if name != "jaxlib" or "cuda" not in rest else ("cuda", "jax")
+        return None
+    if box == "conda":
+        name = conda_package_name(line)
+        rest = line.split("::")[-1][len(name):].lower()
+        if name in _CUDA_CONDA or name.startswith("cuda-") or "cuda" in rest:
+            return ("cuda", "")
+        if name in _CPU_CONDA or "cpu" in rest:
+            return ("cpu", "")
+        return None
+    if box == "cran":
+        return ("cpu", "") if line.strip() == "torch" else None
+    if box == "apt":
+        name = line.split("=", 1)[0].strip()
+        if name.startswith(("nvidia-", "libnvidia-", "libcuda", "libcudart", "libcublas", "libcudnn", "libnccl")):
+            return ("cuda", "")
+    return None
+
+
+def gpu_warnings(app: dict[str, Any]) -> list[str]:
+    """What the requester should know about the GPU and CPU builds the app
+    asks for: CUDA builds cannot use the emulated GPUs (or no GPUs at all),
+    and CPU builds do not use them."""
+    gpu = app["features"]["gpu"]
+    software = app["software"]
+    warnings = []
+    boxes = [
+        ("pip", "software.pip", software["pip"]),
+        ("conda", "software.conda.packages", software["conda"]["packages"]),
+        ("cran", "software.r.cran", software["r"]["cran"]),
+        ("apt", "software.apt", software["apt"]),
+    ]
+    for box, field, lines in boxes:
+        for line in lines:
+            build = gpu_build(box, line)
+            if not build:
+                continue
+            kind, instead = build
+            name = line.strip()
+            torch = box == "pip" and _normal(_PIP_LINE.match(line).group(1)) in TORCH
+            if torch and gpu["enabled"] and gpu["pytorch"]:
+                warnings.append(
+                    f"{field}: `{name}` comes with the emulated GPUs already (features.gpu.pytorch), in the CPU "
+                    "build their torch.cuda works with. Listed here too, it can be replaced by PyPI's build for "
+                    "CUDA GPUs, which cannot use them: take it out"
+                )
+            elif torch and gpu["enabled"]:
+                warnings.append(
+                    f"{field}: `{name}` on its own is not the PyTorch the emulated GPUs work with, so torch.cuda "
+                    "will not see them" + ("" if kind == "cpu" else ", and PyPI's build for CUDA GPUs adds gigabytes to the image")
+                    + ". Turn on features.gpu.pytorch for the build that does"
+                )
+            elif torch:
+                if kind == "cuda":
+                    warnings.append(
+                        f"{field}: `{name}` from PyPI is the build for CUDA GPUs. The app has no GPUs, so it runs on "
+                        "the CPU, with about 3 GB of CUDA libraries it cannot use"
+                    )
+            elif kind == "cuda" and box == "apt":
+                warnings.append(
+                    f"{field}: `{name}` is NVIDIA's driver or CUDA software. "
+                    + ("The emulated GPUs have no CUDA, so CUDA programs cannot run on them, and NVIDIA's own driver "
+                       "libraries would get in the emulator's way" if gpu["enabled"] else "The app has no GPUs for it")
+                )
+            elif kind == "cuda":
+                other = f" `{instead}` is its CPU counterpart." if instead else ""
+                if gpu["enabled"]:
+                    warnings.append(
+                        f"{field}: `{name}` is built for real (CUDA) GPUs. The emulated GPUs have no CUDA, so it cannot "
+                        "run on them: it will fail, or run on the CPU, and it makes the image larger. GPU code runs on "
+                        f"them through PyTorch and Numba's CUDA simulator (features.gpu).{other}"
+                    )
+                else:
+                    warnings.append(
+                        f"{field}: `{name}` is built for CUDA GPUs, and the app has no GPUs: it will fail, or run on the "
+                        f"CPU, and it makes the image larger.{other}"
+                    )
+            elif gpu["enabled"]:
+                where = (
+                    " It goes in the conda environment for command-line tools, where JupyterLab's Python cannot import "
+                    "it either: use features.gpu.pytorch" if box == "conda" and name.startswith("pytorch") else ""
+                )
+                warnings.append(
+                    f"{field}: `{name}` is a CPU build: it runs on the CPU, and the emulated GPUs will not see it.{where}"
+                )
+    if gpu["enabled"] and not gpu["numba"]:
+        for line in software["pip"]:
+            match = _PIP_LINE.match(line)
+            if match and _normal(match.group(1)) == "numba":
+                warnings.append(
+                    f"software.pip: `{line.strip()}` has no CUDA here, so @cuda.jit kernels cannot run on the emulated "
+                    "GPUs. Turn on features.gpu.numba for Numba's CUDA simulator"
+                )
+    if gpu["enabled"] and not gpu["pytorch"] and not gpu["numba"]:
+        warnings.append(
+            "features.gpu: with PyTorch and Numba's CUDA simulator both off, no code runs on the emulated GPUs; only "
+            "nvidia-smi, nvtop and Slurm see them"
+        )
+    return warnings
+
+
 def conda_package_name(spec: str) -> str:
     """'bioconda::samtools=1.21' -> 'samtools', 'python >=3.10' -> 'python'."""
     spec = spec.split("::", 1)[-1]
@@ -289,6 +453,7 @@ def normalise(raw: dict[str, Any], defaults: dict[str, Any]) -> tuple[dict[str, 
         warnings.append("software.r is only installed in the RStudio app, and this app has no RStudio interface")
     if app["software"]["vscode_extensions"] and "codeserver" not in app["interfaces"]:
         warnings.append("software.vscode_extensions is only installed in the VS Code app, and this app has no VS Code interface")
+    warnings.extend(gpu_warnings(app))
     if lmod["enabled"] and not app["software"]["conda"]["packages"]:
         warnings.append(
             "features.lmod is on but there are no conda packages, so `module avail` will "
