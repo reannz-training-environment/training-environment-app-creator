@@ -208,3 +208,13 @@ def test_emulators_with_old_r_need_a_newer_python(schema, defaults):
     # newer R's images have Python 3.10 or newer
     raw["advanced"] = {"r_version": "4.3.2"}
     check(raw, "t.yml", schema, defaults)
+
+
+def test_the_version_test_builds_are_valid(schema, defaults):
+    from conftest import ROOT
+    from te_app_creator.spec import load
+
+    builds = sorted((ROOT / "tests" / "builds").glob("*.yml"))
+    assert len(builds) >= 18
+    for path in builds:
+        load(path, schema, defaults)
