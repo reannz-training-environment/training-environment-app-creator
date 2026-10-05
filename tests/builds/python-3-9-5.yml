@@ -1,0 +1,11 @@
+# A test build of one of Mahuika's Python or R versions: run Validate by
+# hand with the specs tests/builds/*.yml
+schema_version: 1
+name: python-3-9-5
+title: python-3-9-5
+interfaces: [jupyter]
+software:
+  pip:
+    - numpy
+advanced:
+  python_version: 3.9.5
