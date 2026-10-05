@@ -7,7 +7,7 @@ import itertools
 import json
 import re
 import subprocess
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import pytest
 
@@ -151,8 +151,11 @@ class FakeGitHub(publish.GitHub):
                         comment["body"] = data["body"]
                         return 200, comment
         if (r := m(rf"/repos/{REPO}/issues/(\d+)")) and method == "PATCH":
-            self.issues.setdefault(int(r.group(1)), {"comments": []})["state"] = data["state"]
+            self.issues.setdefault(int(r.group(1)), {"comments": []}).update(data)
             return 200, {}
+        if (r := m(rf"/repos/{REPO}/issues/(\d+)/labels/(.+)")) and method == "DELETE":
+            self.unlabelled = [*getattr(self, "unlabelled", []), (int(r.group(1)), unquote(r.group(2)))]
+            return 200, []
         if (r := m(rf"/repos/{REPO}/issues/(\d+)")) and method == "GET":
             return 200, self.issue_payloads[int(r.group(1))]
         if r := m(rf"/repos/{REPO}/collaborators/([^/]+)/permission"):
@@ -163,9 +166,10 @@ class FakeGitHub(publish.GitHub):
         raise AssertionError(f"unexpected call {method} {path}")
 
 
-def event(number, spec, user="alice", association="MEMBER", action="opened", labels=(), label=None):
+def event(number, spec, user="alice", association="MEMBER", action="opened", labels=(), label=None, sender=None):
     payload = {
         "action": action,
+        "sender": {"login": sender or user},
         "issue": {
             "number": number,
             "state": "open",
@@ -356,7 +360,7 @@ def test_outsiders_wait_for_a_maintainer(schema, defaults):
 
     # other labels change nothing; the approval label goes ahead
     other = event(11, spec_text(), user="mallory", association="NONE", action="labeled", labels=["question"], label="question")
-    assert handle(gh, other, schema, defaults) == "only the approval label matters"
+    assert handle(gh, other, schema, defaults) == "only the approval and rejection labels matter"
     approved = event(
         11, spec_text(), user="mallory", association="NONE", action="labeled",
         labels=["app request", "request approved"], label="request approved",
@@ -569,3 +573,53 @@ def test_every_request_waits_for_a_maintainer_by_default(schema):
 
     # and so does running the Request workflow by hand
     assert handle(FakeGitHub(), member, schema, config, approved=True).startswith("pull request")
+
+
+def test_a_rejected_request_is_closed(schema, defaults):
+    defaults = {**defaults, "request_approval": "everyone", "reviewers": ["geoffreyweal"]}
+    gh = FakeGitHub()
+    handle(gh, event(70, spec_text(), user="mallory", association="NONE"), schema, defaults)
+    rejected = event(70, spec_text(), user="mallory", association="NONE", action="labeled",
+                     labels=["app request", "request rejected"], label="request rejected", sender="geoffreyweal")
+    assert handle(gh, rejected, schema, defaults) == "rejected the request"
+    assert not gh.pulls
+    assert gh.issues[70]["state"] == "closed" and gh.issues[70]["state_reason"] == "not_planned"
+    news = gh.comments(70)[-1]
+    assert news.startswith("@mallory: @geoffreyweal rejected this request, so the app will not be made.")
+    assert "make a new request on the [website](" in news
+
+
+def test_rejecting_a_request_closes_its_pull_request(schema, defaults):
+    defaults = {**defaults, "request_approval": "everyone"}
+    gh = FakeGitHub()
+    accepted = event(71, spec_text(), action="labeled", labels=["request approved"], label="request approved")
+    handle(gh, accepted, schema, defaults)
+    (number,) = gh.pulls
+    rejected = event(71, spec_text(), action="labeled", labels=["request approved", "request rejected"],
+                     label="request rejected", sender="geoffreyweal")
+    assert handle(gh, rejected, schema, defaults) == f"rejected the request and closed #{number}"
+    assert gh.pulls[number]["state"] == "closed"
+    assert gh.comments(number) == ["Closed: request #71 was rejected.\n"]
+    assert "app-request/71" not in gh.refs
+    # the other label comes off, so the issue says only what was decided last
+    assert gh.unlabelled == [(71, "request approved")]
+    assert gh.issues[71]["state"] == "closed"
+    assert f"Its pull request, #{number}, is closed." in gh.comments(71)[-1]
+
+
+def test_a_rejected_request_can_be_accepted_after_all(schema, defaults):
+    defaults = {**defaults, "request_approval": "everyone"}
+    gh = FakeGitHub()
+    # reopened or edited, it is left alone while it has the label
+    reopened = event(72, spec_text(), action="reopened", labels=["request rejected"])
+    assert handle(gh, reopened, schema, defaults).startswith("the request was rejected")
+    assert not gh.pulls and not gh.comments(72)
+    # accepting it takes the rejection off
+    accepted = event(72, spec_text(), action="labeled", labels=["request rejected", "request approved"],
+                     label="request approved")
+    assert handle(gh, accepted, schema, defaults).startswith("pull request")
+    assert gh.unlabelled == [(72, "request rejected")]
+    # and so does running the Request workflow by hand
+    gh = FakeGitHub()
+    retried = {**event(72, spec_text(), labels=["request rejected"]), "action": "retried"}
+    assert handle(gh, retried, schema, defaults, approved=True).startswith("pull request")

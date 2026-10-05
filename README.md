@@ -54,7 +54,8 @@ Then:
 
 1. **A maintainer accepts the request**, by adding the `request approved`
    label to it; the reviewers in [`config/defaults.yml`](config/defaults.yml)
-   are asked to. Nothing is built before that.
+   are asked to. Nothing is built before that. The `request rejected` label
+   [turns it down](#who-approves) instead.
 2. The **Request** workflow checks the spec, commits it as `apps/<name>.yml`
    on the branch `app-request/<issue>`, opens a pull request, and comments on
    the request with its progress. A change to an existing app is given the
@@ -248,6 +249,14 @@ goes through the rest.
 review each request's pull request once its images build. Anyone who can merge
 pull requests here can approve a request. People in the organisation only need
 *read* access to make requests.
+
+To reject a request, add the `request rejected` label to its issue, at any
+point before its pull request is merged. The app creator tells the requester,
+closes the issue, and closes its pull request, if it has one. Of the two
+labels, the one added last decides: to accept a rejected request after all,
+reopen its issue and add `request approved`, and the rejection comes off.
+Anyone who can label issues here (*triage* access or more) can accept or reject
+a request.
 
 ## Working on the generator
 
