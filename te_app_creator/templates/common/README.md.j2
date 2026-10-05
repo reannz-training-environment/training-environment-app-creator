@@ -30,6 +30,10 @@ The same workshop environment is also available as:
 | Interface | {{ iface.label }} |
 | Image | `{{ image }}:{{ image_tag }}` |
 | Session | {{ app.resources.cpu }} CPUs, {{ app.resources.memory_gb }} GB memory, {{ app.resources.wall_time_hours.default }} hours by default ({{ app.resources.wall_time_hours.min }}-{{ app.resources.wall_time_hours.max }}) |
+| Python | {{ python }}{% if advanced.python_version %}, from conda-forge{% else %}, Ubuntu {{ ubuntu_release }}'s own{% endif %} |
+{% if iface.key == "rstudio" %}
+| R | {{ advanced.r_version }}{% if rstudio_base.posit_r %}, from Posit's builds of R, with packages from CRAN as it was on {{ rstudio_base.snapshot }}{% else %}, from `{{ rstudio_base.image }}`{% endif %} |
+{% endif %}
 {% if gpu.enabled %}
 | Emulated GPUs | {% if gpu_choose %}one per session, chosen on the launch form from {% endif %}{% for card in gpu.cards %}`{{ card }}`{% if not loop.last %}, {% endif %}{% endfor %} with {{ gpu.vram }}{% if not gpu_choose %} each{% endif %}{% if gpu.pytorch %}; PyTorch (CPU build) sees {% if gpu_choose %}it{% else %}them{% endif %} through `torch.cuda`{% endif %}{% if gpu.numba %}; Numba's CUDA simulator is on{% endif %} |
 {% endif %}

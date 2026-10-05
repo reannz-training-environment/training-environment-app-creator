@@ -3,6 +3,7 @@
 FROM ubuntu:{{ pins.ubuntu }}
 
 {% include "partials/system-ubuntu.Dockerfile.j2" %}
+{% include "partials/python.Dockerfile.j2" %}
 
 {% include "partials/ood-k8s.Dockerfile.j2" %}
 {% include "partials/apt.Dockerfile.j2" %}

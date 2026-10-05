@@ -13,12 +13,14 @@
 # perl and friends still come first.
 {% endif %}
 # ---------------------------------------------------------------------------
+{% if not advanced.python_version %}
 ARG MICROMAMBA_VERSION={{ pins.micromamba }}
 ENV MAMBA_ROOT_PREFIX=/opt/conda
 RUN curl -fsSL -o /usr/local/bin/micromamba \
         "https://github.com/mamba-org/micromamba-releases/releases/download/${MICROMAMBA_VERSION}/micromamba-linux-64" \
     && chmod 0755 /usr/local/bin/micromamba \
     && micromamba --version
+{% endif %}
 
 COPY conda/ /opt/app-creator/conda/
 COPY scripts/make-conda-wrappers.py /opt/app-creator/make-conda-wrappers.py

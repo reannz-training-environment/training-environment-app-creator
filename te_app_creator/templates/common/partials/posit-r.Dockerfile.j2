@@ -1,0 +1,36 @@
+
+# ---------------------------------------------------------------------------
+# R {{ advanced.r_version }}. rocker builds R 3 only on Debian releases too old to build this
+# image on, so it comes from Posit's builds of R for Ubuntu 20.04
+# (https://github.com/rstudio/r-builds), in /opt/R/{{ advanced.r_version }}, in place of the R
+# of the image this is built on, rocker/rstudio:{{ rstudio_base.tag }}.
+#
+# Its packages come from Posit's CRAN snapshot of {{ rstudio_base.snapshot }}, the day before
+# the next R release, so they are the versions that worked with it. They are
+# compiled from source, since there are no Ubuntu 20.04 builds that old: the
+# libraries that common packages compile against are installed too.
+# ---------------------------------------------------------------------------
+ARG R_VERSION={{ advanced.r_version }}
+ENV R_HOME=/opt/R/${R_VERSION}/lib/R
+RUN curl -fsSL -o /tmp/r.deb "https://cdn.posit.co/r/ubuntu-2004/pkgs/r-${R_VERSION}_1_amd64.deb" \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        /tmp/r.deb \
+        libcurl4-openssl-dev \
+        libfontconfig1-dev \
+        libfreetype6-dev \
+        libfribidi-dev \
+        libharfbuzz-dev \
+        libjpeg-dev \
+        libpng-dev \
+        libssl-dev \
+        libtiff5-dev \
+        libxml2-dev \
+        zlib1g-dev \
+    && rm -f /tmp/r.deb \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf "/opt/R/${R_VERSION}/bin/R" /usr/local/bin/R \
+    && ln -sf "/opt/R/${R_VERSION}/bin/Rscript" /usr/local/bin/Rscript \
+    && echo 'options(repos = c(CRAN = "https://packagemanager.posit.co/cran/{{ rstudio_base.snapshot }}"))' \
+        >> "${R_HOME}/etc/Rprofile.site" \
+    && R --version | head -n 1 | grep -q "^R version ${R_VERSION} "
