@@ -32,10 +32,3 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
 # Make sure RStudio uses the R this image was built on, whatever else is put
 # on PATH later
 RUN echo "rsession-which-r=/usr/local/bin/R" > /etc/rstudio/rserver.conf
-
-# Python packages go in a virtual environment at the front of PATH: Ubuntu
-# 24.04 does not let pip change the system Python, and pip cannot upgrade
-# packages that apt installed there
-RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip --no-cache-dir install --upgrade pip 'setuptools>=64' wheel
-ENV PATH="/opt/venv/bin:${PATH}"

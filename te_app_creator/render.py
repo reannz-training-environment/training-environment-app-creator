@@ -14,7 +14,16 @@ import jinja2
 import yaml
 
 from . import __version__
-from .spec import GPU_CARDS, INTERFACES, VRAM_OPTIONS, Spec, conda_package_name
+from .spec import (
+    GPU_CARDS,
+    INTERFACES,
+    UBUNTU_PYTHON,
+    UBUNTU_RELEASES,
+    VRAM_OPTIONS,
+    Spec,
+    conda_package_name,
+    rstudio_base,
+)
 
 TEMPLATES = Path(__file__).resolve().parent / "templates"
 MANIFEST = ".app-creator.json"
@@ -87,14 +96,17 @@ def context(spec: Spec, interface: str, defaults: dict[str, Any]) -> dict[str, A
     r_packages = software["r"] if rstudio else {"cran": [], "bioconductor": [], "github": []}
     tz_area, _, tz_zone = defaults["timezone"].partition("/")
 
+    advanced = app["advanced"]
+    base = rstudio_base(advanced["r_version"])
     if rstudio:
-        # rocker images are Ubuntu 24.04, where Python packages go in the
-        # /opt/venv virtual environment (see partials/system-rocker)
+        # Python packages go in the /opt/venv virtual environment, since
+        # Ubuntu 24.04 does not let pip change the system Python (see
+        # partials/python)
         pip = "/opt/venv/bin/pip --no-cache-dir"
-        os_codename = "noble"
+        ubuntu = base["ubuntu"]
     else:
-        pip = "pip3 --no-cache-dir"
-        os_codename = "jammy"
+        pip = "/opt/python/bin/pip --no-cache-dir" if advanced["python_version"] else "pip3 --no-cache-dir"
+        ubuntu = next(name for name, release in UBUNTU_RELEASES.items() if release == pins["ubuntu"])
 
     # The image's GPUs when the launch form does not say: in "choose" mode, the
     # first card on offer; otherwise all of them
@@ -140,10 +152,15 @@ def context(spec: Spec, interface: str, defaults: dict[str, Any]) -> dict[str, A
         "has_r_packages": any(r_packages.values()),
         "extensions": software["vscode_extensions"] if interface == "codeserver" else [],
         "data": app["data"],
-        "start_dir": app["advanced"]["start_dir"],
-        "advanced": app["advanced"],
+        "start_dir": advanced["start_dir"],
+        "advanced": advanced,
+        # the image the RStudio app is built from; for R 3, R comes from Posit
+        "rstudio_base": {**base, "image": f"{advanced['rstudio_image']}:{base['tag']}"},
         "pip": pip,
-        "os_codename": os_codename,
+        "ubuntu": ubuntu,
+        "ubuntu_release": UBUNTU_RELEASES[ubuntu],
+        # the python3 learners get
+        "python": advanced["python_version"] or UBUNTU_PYTHON[ubuntu],
         "tz_area": tz_area,
         "tz_zone": tz_zone,
         "rsession_env": rstudio and (gpu["enabled"] or slurm["enabled"] or lmod or bool(conda_packages)),

@@ -51,9 +51,9 @@ pins:
   # VS Code in the browser
   code_server: 4.137.0
 
-  # used when an app spec does not choose
+  # used when an app spec does not choose; 4.6.0 is Mahuika's default R
   rstudio_image: rocker/rstudio
-  r_version: 4.5.3
+  r_version: 4.6.0
 
   # conda packages are installed with micromamba
   micromamba: 2.8.1-1

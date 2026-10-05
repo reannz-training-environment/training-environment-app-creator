@@ -1,0 +1,20 @@
+# Python and R versions other than the images' own, as Mahuika has them:
+# Python 3.9.9 from conda-forge in both images, and R 3.6.2 from Posit's builds
+# of R, with a package compiled from CRAN as it was then. CI builds it whenever
+# the generator changes, so the older versions keep working.
+schema_version: 1
+name: versions
+title: Python and R versions
+description: Python 3.9.9 and R 3.6.2, as Mahuika's modules have them.
+interfaces: [jupyter, rstudio]
+
+software:
+  pip:
+    - numpy
+  r:
+    cran:
+      - jsonlite
+
+advanced:
+  python_version: 3.9.9
+  r_version: 3.6.2

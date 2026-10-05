@@ -239,7 +239,16 @@
         "rstudio_image": {
           "enum": ["rocker/rstudio", "rocker/tidyverse", "rocker/verse", "rocker/geospatial"]
         },
-        "r_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "r_version": {
+          "description": "R in the RStudio app. R 4 comes with its rocker image; R 3 (3.4.2 to 3.6.3) from Posit's builds of R.",
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "python_version": {
+          "description": "Python in every interface's image, from conda-forge, such as 3.11.6. Without it, each image has its own Ubuntu's python3. The Slurm and GPU emulators need 3.10 or newer.",
+          "type": "string",
+          "pattern": "^3\\.[0-9]+\\.[0-9]+$"
+        },
         "dockerfile": {
           "description": "Extra Dockerfile instructions, added to every image after the software is installed.",
           "type": "string",

@@ -63,6 +63,19 @@ set -x
 
 echo "Starting up rserver..."
 
+# The RStudio Servers of older R versions' images lack some of the options
+# newer ones need, so give each only the ones it has
+rserver_help="$(rserver --help 2>&1 || true)"
+rserver_options=()
+for option in \
+    "--database-config-file=/etc/rstudio/database/database.conf" \
+    "--server-data-dir=/tmp/rserver-run" \
+    "--server-app-armor-enabled=0"; do
+    if grep -q -- "${option%%=*}" <<< "${rserver_help}"; then
+        rserver_options+=("${option}")
+    fi
+done
+
 # launch rserver
 rserver \
     --www-port=8080 \
@@ -70,9 +83,7 @@ rserver \
     --auth-pam-helper-path="${RSTUDIO_AUTH}" \
     --auth-encrypt-password=0 \
     --auth-timeout-minutes=0 \
-    --database-config-file='/etc/rstudio/database/database.conf' \
-    --server-data-dir='/tmp/rserver-run' \
     --server-daemonize=0 \
     --server-user=$(whoami) \
     --rsession-path "${RSESSION_WRAPPER_FILE}" \
-    --server-app-armor-enabled=0
+    "${rserver_options[@]}"

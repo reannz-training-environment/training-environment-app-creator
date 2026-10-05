@@ -1,0 +1,11 @@
+# A test build of one of Mahuika's Python or R versions. To build them all,
+# run Validate by hand with the specs tests/builds/*.yml
+schema_version: 1
+name: slurm-python-3-10-5
+title: slurm-python-3-10-5
+interfaces: [codeserver]
+features:
+  slurm:
+    enabled: true
+advanced:
+  python_version: 3.10.5

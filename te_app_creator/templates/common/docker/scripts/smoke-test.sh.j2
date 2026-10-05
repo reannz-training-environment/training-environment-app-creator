@@ -68,6 +68,13 @@ for helper in find_host_port save_passwd_as_secret create_salt_and_sha1 create_p
     [ -x "/bin/${helper}" ] || fail "/bin/${helper} from training-environment-k8s-utils is missing"
 done
 ok "kubectl and the ood k8s utils"
+{% if advanced.python_version %}
+
+# --- Python ---------------------------------------------------------------
+[ "$(python3 -c 'import platform; print(platform.python_version())')" = "{{ advanced.python_version }}" ] \
+    || fail "python3 is $(python3 --version 2>&1), not Python {{ advanced.python_version }}"
+ok "Python {{ advanced.python_version }}: $(command -v python3)"
+{% endif %}
 
 # --- the interface --------------------------------------------------------
 {% if iface.key == "jupyter" %}
@@ -76,7 +83,19 @@ ok "JupyterLab $(jupyter lab --version)"
 {% elif iface.key == "rstudio" %}
 [ -x /usr/lib/rstudio-server/bin/rserver ] || fail "RStudio Server is not installed"
 [ -x /usr/lib/rstudio-server/bin/rsession ] || fail "rsession is not installed"
-ok "RStudio Server with $(R --version | head -n 1)"
+r_version="$(Rscript -e 'cat(as.character(getRversion()))')"
+[ "${r_version}" = "{{ advanced.r_version }}" ] || fail "R is ${r_version}, not {{ advanced.r_version }}"
+# the options template/script.sh.erb always starts rserver with
+rserver_help="$(/usr/lib/rstudio-server/bin/rserver --help 2>&1 || true)"
+for option in www-port auth-none auth-pam-helper-path auth-encrypt-password auth-timeout-minutes \
+    server-daemonize server-user rsession-path; do
+    grep -q -- "--${option}" <<< "${rserver_help}" || fail "RStudio Server has no --${option} option"
+done
+optional=""
+for option in database-config-file server-data-dir server-app-armor-enabled; do
+    if grep -q -- "--${option}" <<< "${rserver_help}"; then optional="${optional} --${option}"; fi
+done
+ok "RStudio Server $(dpkg-query -W -f='${Version}' rstudio-server 2> /dev/null), with${optional:- none of the optional options}, and $(R --version | head -n 1)"
 {% else %}
 code-server --version > /dev/null || fail "code-server does not run"
 ok "code-server $(code-server --version | head -n 1)"
@@ -123,9 +142,26 @@ done < /opt/software/packages.tsv
 
 # --- Python packages ------------------------------------------------------
 python3 - << 'EOF' || fail "requested Python packages are not installed"
-import importlib.metadata as metadata
 import re
 import sys
+
+try:
+    import importlib.metadata as metadata
+
+    def installed(name):
+        try:
+            return bool(metadata.distribution(name))
+        except metadata.PackageNotFoundError:
+            return False
+
+except ImportError:  # Python 3.7 has no importlib.metadata
+    import pkg_resources
+
+    def installed(name):
+        try:
+            return bool(pkg_resources.get_distribution(name))
+        except pkg_resources.DistributionNotFound:
+            return False
 
 missing = []
 for line in open("/opt/app-creator/requirements.txt", encoding="utf-8"):
@@ -133,9 +169,7 @@ for line in open("/opt/app-creator/requirements.txt", encoding="utf-8"):
     if not line or line.startswith(("-", "git+")):
         continue
     name = re.split(r"[\s\[<>=!~;@]", line, maxsplit=1)[0]
-    try:
-        metadata.distribution(name)
-    except metadata.PackageNotFoundError:
+    if not installed(name):
         missing.append(name)
 if missing:
     print("not installed:", ", ".join(missing), file=sys.stderr)

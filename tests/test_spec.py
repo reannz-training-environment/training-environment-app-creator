@@ -6,7 +6,7 @@ import copy
 
 import pytest
 
-from te_app_creator.spec import SpecError, check, conda_package_name
+from te_app_creator.spec import SpecError, check, conda_package_name, rstudio_base
 
 MINIMAL = {"schema_version": 1, "name": "intro-python", "title": "Intro to Python", "interfaces": ["jupyter"]}
 
@@ -152,3 +152,69 @@ def test_r_and_extensions_warn_without_their_interface(schema, defaults):
     warnings = check(raw, "t.yml", schema, defaults).warnings
     assert any("RStudio" in w for w in warnings)
     assert any("VS Code" in w for w in warnings)
+
+
+def test_python_is_the_images_own_unless_chosen(schema, defaults):
+    assert check(MINIMAL, "t.yml", schema, defaults).app["advanced"]["python_version"] == ""
+    app = check(spec_with(advanced={"python_version": "3.11.6"}), "t.yml", schema, defaults).app
+    assert app["advanced"]["python_version"] == "3.11.6"
+
+
+@pytest.mark.parametrize("version", ["2.7.18", "3.11", "python3.11", "3.11.6 ", "4.0.0"])
+def test_bad_python_versions_are_refused(schema, defaults, version):
+    assert "python_version" in errors_of(spec_with(advanced={"python_version": version}), schema, defaults)
+
+
+def test_python_too_old_for_jupyterlab_is_refused(schema, defaults):
+    assert "Python 3.6.15 is too old" in errors_of(spec_with(advanced={"python_version": "3.6.15"}), schema, defaults)
+    check(spec_with(advanced={"python_version": "3.7.3"}), "t.yml", schema, defaults)
+
+
+@pytest.mark.parametrize("feature", ["slurm", "gpu"])
+def test_the_emulators_need_python_3_10(schema, defaults, feature):
+    raw = spec_with(features={feature: {"enabled": True}}, advanced={"python_version": "3.9.9"})
+    assert "the Slurm and GPU emulators need Python 3.10 or newer, not 3.9.9" in errors_of(raw, schema, defaults)
+    raw["advanced"]["python_version"] = "3.10.5"
+    check(raw, "t.yml", schema, defaults)
+
+
+def test_each_r_version_has_its_rocker_image():
+    assert rstudio_base("4.6.0") == {"tag": "4.6.0", "ubuntu": "noble", "posit_r": False, "snapshot": ""}
+    assert rstudio_base("4.4.2")["ubuntu"] == "noble"
+    assert rstudio_base("4.4.1")["ubuntu"] == "jammy"
+    assert rstudio_base("4.2.2")["ubuntu"] == "jammy"
+    assert rstudio_base("4.2.1")["ubuntu"] == "focal"
+    assert rstudio_base("4.0.1")["ubuntu"] == "focal"
+    # R 3 comes from Posit, on rocker's oldest Ubuntu image
+    assert rstudio_base("3.6.2") == {"tag": "4.0.1", "ubuntu": "focal", "posit_r": True, "snapshot": "2020-02-28"}
+
+
+def test_r_3_needs_rocker_rstudio_and_a_known_version(schema, defaults):
+    def rstudio(**advanced):
+        return spec_with(interfaces=["rstudio"], advanced=advanced)
+
+    check(rstudio(r_version="3.5.3"), "t.yml", schema, defaults)
+    assert "use rocker/rstudio" in errors_of(rstudio(r_version="3.6.2", rstudio_image="rocker/tidyverse"), schema, defaults)
+    assert "cannot make R 3.3.3" in errors_of(rstudio(r_version="3.3.3"), schema, defaults)
+    # without RStudio, the R version does not matter
+    check(spec_with(advanced={"r_version": "3.3.3"}), "t.yml", schema, defaults)
+
+
+def test_emulators_with_old_r_need_a_newer_python(schema, defaults):
+    raw = spec_with(interfaces=["rstudio"], features={"slurm": {"enabled": True}}, advanced={"r_version": "4.1.0"})
+    assert "Ubuntu 20.04, whose Python 3.8 is too old" in errors_of(raw, schema, defaults)
+    raw["advanced"]["python_version"] = "3.11.6"
+    check(raw, "t.yml", schema, defaults)
+    # newer R's images have Python 3.10 or newer
+    raw["advanced"] = {"r_version": "4.3.2"}
+    check(raw, "t.yml", schema, defaults)
+
+
+def test_the_version_test_builds_are_valid(schema, defaults):
+    from conftest import ROOT
+    from te_app_creator.spec import load
+
+    builds = sorted((ROOT / "tests" / "builds").glob("*.yml"))
+    assert len(builds) >= 18
+    for path in builds:
+        load(path, schema, defaults)

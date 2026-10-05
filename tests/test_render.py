@@ -201,7 +201,8 @@ def test_dockerfile_has_each_feature(schema, defaults):
         # NeSI's seff and svisit come with every Slurm, GPU or not
         assert ("opt-nesi-bin" in dockerfile) == features["slurm"]["enabled"]
         assert ("docker/scripts/slurm-nesi-tools.py" in files) == features["slurm"]["enabled"]
-        assert ("micromamba create" in dockerfile) == bool(spec.app["software"]["conda"]["packages"])
+        assert ("micromamba create -y -p /opt/conda/envs/apps" in dockerfile) == bool(spec.app["software"]["conda"]["packages"])
+        assert ("micromamba create -y -p /opt/python" in dockerfile) == bool(spec.app["advanced"]["python_version"])
         for item in spec.app["data"]:
             assert f'"{item["dest"]}"' in dockerfile
         if interface == "rstudio":
@@ -240,3 +241,78 @@ def test_no_template_leaves_jinja_behind(schema, defaults):
             text = f.content.decode()
             assert "{{" not in text.replace("${{", ""), f"{path} has an unrendered {{{{"
             assert "{%" not in text, f"{path} has an unrendered {{%"
+
+
+def files_of(schema, defaults, interface, **raw):
+    from te_app_creator.spec import check
+
+    spec = check({"schema_version": 1, "name": "versions", "title": "Versions", **raw}, "t.yml", schema, defaults)
+    return {f.path: f.content.decode() for f in render.render(spec, interface, defaults) if not f.path.endswith(".png")}
+
+
+@pytest.mark.parametrize("interface", ["jupyter", "codeserver"])
+def test_a_chosen_python_comes_first_on_path(schema, defaults, interface):
+    files = files_of(
+        schema, defaults, interface, interfaces=[interface],
+        software={"pip": ["numpy"], "conda": {"packages": ["samtools"]}}, advanced={"python_version": "3.11.6"},
+    )
+    dockerfile = files["docker/Dockerfile"]
+    assert '-c conda-forge "python=3.11.6" pip' in dockerfile
+    assert 'ENV PATH="/opt/python/bin:${PATH}"' in dockerfile
+    assert "RUN /opt/python/bin/pip --no-cache-dir install -r /opt/app-creator/requirements.txt" in dockerfile
+    # one micromamba, for Python and the conda packages
+    assert dockerfile.count("micromamba-linux-64") == 1
+    assert dockerfile.index('"python=3.11.6"') < dockerfile.index("micromamba create -y -p /opt/conda/envs/apps")
+    assert '= "3.11.6" ]' in files["docker/scripts/smoke-test.sh"]
+    assert "| Python | 3.11.6, from conda-forge |" in files["README.md"]
+
+
+def test_without_a_chosen_python_the_image_keeps_its_own(schema, defaults):
+    files = files_of(schema, defaults, "jupyter", interfaces=["jupyter"], software={"pip": ["numpy"]})
+    assert "/opt/python" not in files["docker/Dockerfile"]
+    assert "RUN pip3 --no-cache-dir install jupyterlab" in files["docker/Dockerfile"]
+    assert "| Python | 3.10, Ubuntu 22.04's own |" in files["README.md"]
+
+
+def test_rstudio_makes_its_virtual_environment_from_the_chosen_python(schema, defaults):
+    dockerfile = files_of(schema, defaults, "rstudio", interfaces=["rstudio"], advanced={"python_version": "3.11.6"})["docker/Dockerfile"]
+    assert "RUN /opt/python/bin/python3 -m venv /opt/venv" in dockerfile
+    assert 'ENV PATH="/opt/python/bin' not in dockerfile
+    default = files_of(schema, defaults, "rstudio", interfaces=["rstudio"])
+    assert "RUN python3 -m venv /opt/venv" in default["docker/Dockerfile"]
+    assert f"FROM rocker/rstudio:{defaults['pins']['r_version']}\n" in default["docker/Dockerfile"]
+
+
+def test_r_3_comes_from_posit_on_the_r_4_0_1_image(schema, defaults):
+    files = files_of(schema, defaults, "rstudio", interfaces=["rstudio"], advanced={"r_version": "3.6.2"})
+    dockerfile = files["docker/Dockerfile"]
+    assert "FROM rocker/rstudio:4.0.1\n" in dockerfile
+    assert "https://cdn.posit.co/r/ubuntu-2004/pkgs/r-${R_VERSION}_1_amd64.deb" in dockerfile
+    assert "ARG R_VERSION=3.6.2" in dockerfile and "ENV R_HOME=/opt/R/${R_VERSION}/lib/R" in dockerfile
+    assert "https://packagemanager.posit.co/cran/2020-02-28" in dockerfile
+    assert '[ "${r_version}" = "3.6.2" ]' in files["docker/scripts/smoke-test.sh"]
+    assert "| R | 3.6.2, from Posit's builds of R, with packages from CRAN as it was on 2020-02-28 |" in files["README.md"]
+    assert "Python | 3.8, Ubuntu 20.04's own" in files["README.md"]
+
+
+def test_r_4_comes_with_its_rocker_image(schema, defaults):
+    files = files_of(schema, defaults, "rstudio", interfaces=["rstudio"], advanced={"r_version": "4.3.2", "rstudio_image": "rocker/verse"})
+    assert "FROM rocker/verse:4.3.2\n" in files["docker/Dockerfile"]
+    assert "cdn.posit.co" not in files["docker/Dockerfile"]
+    assert "| R | 4.3.2, from `rocker/verse:4.3.2` |" in files["README.md"]
+
+
+def test_gpus_on_ubuntu_20_04_get_cmake_from_pip(schema, defaults):
+    gpu = {"features": {"gpu": {"enabled": True}}, "advanced": {"python_version": "3.11.6"}}
+    old = files_of(schema, defaults, "rstudio", interfaces=["rstudio"], **{**gpu, "advanced": {**gpu["advanced"], "r_version": "4.1.0"}})
+    assert "/opt/venv/bin/pip --no-cache-dir install 'cmake>=3.18'" in old["docker/Dockerfile"]
+    assert "apt-get purge -y cmake" not in old["docker/Dockerfile"]
+    new = files_of(schema, defaults, "jupyter", interfaces=["jupyter"], **gpu)
+    assert "        cmake \\\n" in new["docker/Dockerfile"] and "install 'cmake" not in new["docker/Dockerfile"]
+
+
+def test_rserver_gets_only_the_options_its_version_has(schema, defaults):
+    script = files_of(schema, defaults, "rstudio", interfaces=["rstudio"])["template/script.sh.erb"]
+    assert '"--database-config-file=/etc/rstudio/database/database.conf"' in script
+    assert 'rserver_options+=("${option}")' in script
+    assert script.rstrip().endswith('"${rserver_options[@]}"')

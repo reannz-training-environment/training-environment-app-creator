@@ -155,7 +155,43 @@ The full list is [`schema/app.schema.json`](schema/app.schema.json); the
 | `software.vscode_extensions` | Open VSX extensions, in the VS Code app |
 | `data` | GitHub repositories (at a branch, tag or commit, optionally one folder) and downloads (unpacked if they are archives), baked into the image and copied into each learner's home directory when a session starts. Existing files are never overwritten |
 | `resources` | CPUs, memory and the wall time range of a session |
+| `advanced.python_version` | The Python every interface's image has, such as `3.11.6`, from conda-forge (see below). Without it, each image keeps its Ubuntu's own `python3` |
+| `advanced.r_version` | The R of the RStudio app (see below); 4.6.0 if not given |
 | `advanced.dockerfile`, `advanced.startup` | Extra Dockerfile instructions, and extra commands run at session start. Reviewers should read these |
+
+### Python and R versions
+
+The website offers the versions of Python and R that Mahuika has. All of them
+test-build.
+
+**Python** comes from conda-forge, in `/opt/python`, installed with
+micromamba. In JupyterLab and VS Code it goes first on `PATH`, so it is the
+`python3` learners and JupyterLab use, and `software.pip` is installed into
+it. In RStudio, the `/opt/venv` virtual environment, where Python packages go,
+is made from it. pip picks the newest JupyterLab each Python can run:
+JupyterLab 3.6 on Python 3.7, 4.3 on 3.8, 4.5 on 3.9, and the latest from 3.10.
+The Slurm and GPU emulators need Python 3.10 or newer. Python 2.7, which
+Mahuika also has, is not offered: JupyterLab and pip no longer run on it, and
+conda-forge has no 2.7.16 or 2.7.18.
+
+Without `python_version`, each image keeps its Ubuntu's own `python3`: 3.10 in
+JupyterLab and VS Code, and in RStudio whichever its R image has (below).
+
+**R 4** comes with the rocker image of that version. rocker built R
+4.0.0 to 4.2.1 on Ubuntu 20.04, R 4.2.2 to 4.4.1 on 22.04, and R 4.4.2 onwards on
+24.04. The Ubuntu decides RStudio's own Python (3.8, 3.10 or 3.12), so an
+RStudio app with R older than 4.2.2 needs a `python_version` of 3.10 or newer
+for the emulators. Its RStudio Server is as old as its R: RStudio 1.3 with
+R 4.0.1, for one. The session gives `rserver` only the options it has.
+
+**R 3** is built by rocker only on Debian releases too old to build these apps
+on. So an R 3 app is built on rocker's R 4.0.1 image (Ubuntu 20.04), with R
+from [Posit's builds of R](https://github.com/rstudio/r-builds) in its place.
+Its packages come from Posit's CRAN snapshot of the day before the next R
+release, so they are the versions that worked with it. They are compiled from
+source, so the image takes longer to build. The R 3 versions that can be made
+are 3.4.2 to 3.6.3, which have snapshots, and only with `rocker/rstudio`: the
+other rocker images' packages are built for R 4.
 
 ## How much space an app needs
 
@@ -276,6 +312,7 @@ a `--dry-run`.
 | --- | --- |
 | `apps/` | one spec per app; what the website adds |
 | `examples/` | specs that use every option, built by CI when the templates change |
+| `tests/builds/` | one spec for each of Mahuika's Python and R versions. To check they all still build, after changing a pin say, run **Validate** by hand with the specs `tests/builds/*.yml` |
 | `schema/app.schema.json` | what a spec may contain |
 | `config/defaults.yml` | the organisation, registry and every version pin |
 | `te_app_creator/spec.py` | loads, checks and fills in specs |

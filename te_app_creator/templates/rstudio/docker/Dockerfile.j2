@@ -1,8 +1,12 @@
 {% include "partials/header.Dockerfile.j2" %}
 
-FROM {{ advanced.rstudio_image }}:{{ advanced.r_version }}
+FROM {{ rstudio_base.image }}
 
 {% include "partials/system-rocker.Dockerfile.j2" %}
+{% if rstudio_base.posit_r %}
+{% include "partials/posit-r.Dockerfile.j2" %}
+{% endif %}
+{% include "partials/python.Dockerfile.j2" %}
 
 {% include "partials/ood-k8s.Dockerfile.j2" %}
 {% include "partials/apt.Dockerfile.j2" %}

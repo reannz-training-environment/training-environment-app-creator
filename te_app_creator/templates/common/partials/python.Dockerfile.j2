@@ -1,0 +1,36 @@
+{% if advanced.python_version %}
+
+# ---------------------------------------------------------------------------
+# Python {{ advanced.python_version }}, as the app spec asks, from conda-forge, in /opt/python.
+{% if iface.key == "rstudio" %}
+# Python packages go in a virtual environment made from it, /opt/venv, at the
+# front of PATH.
+{% else %}
+# It goes first on PATH, so it is the python3 learners{% if iface.key == "jupyter" %} and JupyterLab{% endif %} use, and
+# Python packages are installed into it.
+{% endif %}
+# Ubuntu's own python3 stays in /usr/bin, for the system's own tools.
+# ---------------------------------------------------------------------------
+ARG MICROMAMBA_VERSION={{ pins.micromamba }}
+ENV MAMBA_ROOT_PREFIX=/opt/conda
+RUN curl -fsSL -o /usr/local/bin/micromamba \
+        "https://github.com/mamba-org/micromamba-releases/releases/download/${MICROMAMBA_VERSION}/micromamba-linux-64" \
+    && chmod 0755 /usr/local/bin/micromamba \
+    && micromamba create -y -p /opt/python --override-channels -c conda-forge "python={{ advanced.python_version }}" pip \
+    && micromamba clean --all --yes \
+    && rm -rf /opt/conda/pkgs \
+    && /opt/python/bin/python3 --version
+{% endif %}
+{% if iface.key == "rstudio" %}
+
+# Python packages go in a virtual environment at the front of PATH: Ubuntu
+# 24.04 does not let pip change the system Python, and pip cannot upgrade
+# packages that apt installed there
+RUN {{ "/opt/python/bin/python3" if advanced.python_version else "python3" }} -m venv /opt/venv \
+    && /opt/venv/bin/pip --no-cache-dir install --upgrade pip 'setuptools>=64' wheel
+ENV PATH="/opt/venv/bin:${PATH}"
+{% elif advanced.python_version %}
+
+ENV PATH="/opt/python/bin:${PATH}"
+RUN {{ pip }} install --upgrade pip 'setuptools>=64' wheel
+{% endif %}

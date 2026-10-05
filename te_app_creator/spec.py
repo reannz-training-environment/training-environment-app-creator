@@ -37,6 +37,37 @@ GPU_CARDS = {
 
 VRAM_OPTIONS = ["100MiB", "200MiB", "512MiB", "1GiB", "2GiB", "4GiB", "full"]
 
+# The Ubuntu each rocker image of R is built on, and its Python: rocker moved
+# from 20.04 to 22.04 at R 4.2.2, and to 24.04 at R 4.4.2. Its R 3 images are
+# Debian releases too old to build these apps on, so R 3 comes from Posit's
+# builds of R (https://github.com/rstudio/r-builds) instead, on rocker's
+# oldest Ubuntu image, R3_BASE.
+UBUNTU_RELEASES = {"focal": "20.04", "jammy": "22.04", "noble": "24.04"}
+UBUNTU_PYTHON = {"focal": "3.8", "jammy": "3.10", "noble": "3.12"}
+R3_BASE = "4.0.1"
+
+# The CRAN snapshot an R 3 app's packages come from: the day before the R
+# release that followed it, so they are the versions that worked with it.
+# Posit's snapshots start in October 2017.
+R3_SNAPSHOTS = {
+    "3.4.2": "2017-11-29",
+    "3.4.3": "2018-03-14",
+    "3.4.4": "2018-04-22",
+    "3.5.0": "2018-07-01",
+    "3.5.1": "2018-12-19",
+    "3.5.2": "2019-03-10",
+    "3.5.3": "2019-04-25",
+    "3.6.0": "2019-07-04",
+    "3.6.1": "2019-12-11",
+    "3.6.2": "2020-02-28",
+    "3.6.3": "2020-04-23",
+}
+
+# JupyterLab 3.6, the oldest still installed by pip, needs Python 3.7; the
+# Slurm and GPU emulators need Python 3.10
+OLDEST_PYTHON = (3, 7)
+EMULATOR_PYTHON = (3, 10)
+
 ARCHIVE_SUFFIXES = (".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".tar", ".zip")
 
 
@@ -112,6 +143,50 @@ def _default_dest(item: dict[str, Any]) -> str:
     stem = filename[: -len(suffix)] if suffix else filename.rsplit(".", 1)[0]
     stem = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip(".-")
     return stem or "data"
+
+
+def version_tuple(value: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in value.split("."))
+
+
+def rstudio_base(r_version: str) -> dict[str, Any]:
+    """The rocker image tag an RStudio app with this R is built from, its
+    Ubuntu, and, for R 3, the CRAN snapshot of its packages."""
+    version = version_tuple(r_version)
+    if version < (4, 0, 0):
+        return {"tag": R3_BASE, "ubuntu": "focal", "posit_r": True, "snapshot": R3_SNAPSHOTS.get(r_version, "")}
+    ubuntu = "focal" if version < (4, 2, 2) else "jammy" if version < (4, 4, 2) else "noble"
+    return {"tag": r_version, "ubuntu": ubuntu, "posit_r": False, "snapshot": ""}
+
+
+def _version_errors(app: dict[str, Any]) -> list[str]:
+    """Python and R versions the app cannot have, with the features it has."""
+    errors = []
+    advanced = app["advanced"]
+    python = advanced["python_version"]
+    # the GPU emulator always brings the Slurm one
+    emulators = app["features"]["slurm"]["enabled"]
+    if python and version_tuple(python) < OLDEST_PYTHON:
+        errors.append(f"advanced.python_version: Python {python} is too old; JupyterLab and pip need Python 3.7 or newer")
+    elif python and emulators and version_tuple(python) < EMULATOR_PYTHON:
+        errors.append(f"advanced.python_version: the Slurm and GPU emulators need Python 3.10 or newer, not {python}")
+    if "rstudio" not in app["interfaces"]:
+        return errors
+    r = advanced["r_version"]
+    base = rstudio_base(r)
+    if base["posit_r"] and not base["snapshot"]:
+        errors.append(f"advanced.r_version: the app creator cannot make R {r}; of R 3, it can make {', '.join(R3_SNAPSHOTS)}")
+    if base["posit_r"] and advanced["rstudio_image"] != "rocker/rstudio":
+        errors.append(
+            f"advanced.rstudio_image: {advanced['rstudio_image']} comes with packages built for R 4, so it cannot "
+            f"have R {r}; use rocker/rstudio, and list the R packages the app needs"
+        )
+    if emulators and not python and base["ubuntu"] == "focal":
+        errors.append(
+            f"advanced.python_version: with R {r}, the RStudio image is Ubuntu 20.04, whose Python "
+            f"{UBUNTU_PYTHON['focal']} is too old for the Slurm and GPU emulators; choose Python 3.10 or newer"
+        )
+    return errors
 
 
 def conda_package_name(spec: str) -> str:
@@ -262,9 +337,14 @@ def normalise(raw: dict[str, Any], defaults: dict[str, Any]) -> tuple[dict[str, 
         "start_dir": advanced.get("start_dir", ""),
         "rstudio_image": advanced.get("rstudio_image", pins["rstudio_image"]),
         "r_version": advanced.get("r_version", pins["r_version"]),
+        # empty: the image's own python3
+        "python_version": advanced.get("python_version", ""),
         "dockerfile": (advanced.get("dockerfile") or "").strip(),
         "startup": (advanced.get("startup") or "").strip(),
     }
+    errors = _version_errors(app)
+    if errors:
+        raise SpecError("", errors)
     return app, warnings
 
 
