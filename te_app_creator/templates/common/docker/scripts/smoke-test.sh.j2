@@ -95,7 +95,7 @@ optional=""
 for option in database-config-file server-data-dir server-app-armor-enabled; do
     if grep -q -- "--${option}" <<< "${rserver_help}"; then optional="${optional} --${option}"; fi
 done
-ok "RStudio Server $(/usr/lib/rstudio-server/bin/rserver --version 2>/dev/null | head -n 1), with${optional:- none of the optional options}, and $(R --version | head -n 1)"
+ok "RStudio Server $(dpkg-query -W -f='${Version}' rstudio-server 2> /dev/null), with${optional:- none of the optional options}, and $(R --version | head -n 1)"
 {% else %}
 code-server --version > /dev/null || fail "code-server does not run"
 ok "code-server $(code-server --version | head -n 1)"
@@ -142,9 +142,26 @@ done < /opt/software/packages.tsv
 
 # --- Python packages ------------------------------------------------------
 python3 - << 'EOF' || fail "requested Python packages are not installed"
-import importlib.metadata as metadata
 import re
 import sys
+
+try:
+    import importlib.metadata as metadata
+
+    def installed(name):
+        try:
+            return bool(metadata.distribution(name))
+        except metadata.PackageNotFoundError:
+            return False
+
+except ImportError:  # Python 3.7 has no importlib.metadata
+    import pkg_resources
+
+    def installed(name):
+        try:
+            return bool(pkg_resources.get_distribution(name))
+        except pkg_resources.DistributionNotFound:
+            return False
 
 missing = []
 for line in open("/opt/app-creator/requirements.txt", encoding="utf-8"):
@@ -152,9 +169,7 @@ for line in open("/opt/app-creator/requirements.txt", encoding="utf-8"):
     if not line or line.startswith(("-", "git+")):
         continue
     name = re.split(r"[\s\[<>=!~;@]", line, maxsplit=1)[0]
-    try:
-        metadata.distribution(name)
-    except metadata.PackageNotFoundError:
+    if not installed(name):
         missing.append(name)
 if missing:
     print("not installed:", ", ".join(missing), file=sys.stderr)
