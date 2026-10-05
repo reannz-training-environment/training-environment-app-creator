@@ -9,7 +9,7 @@ body:
     attributes:
       value: >-
         Filled in by the [app creator website](https://reannz-training-environment.github.io/training-environment-app-creator-website/).
-        Nothing needs changing: press **Create**. Once a maintainer accepts the request, the app creator
+        Nothing needs changing: press **Create**. A maintainer then accepts or rejects the request. Once it is accepted, the app creator
         opens a pull request with the app, test-builds its images and asks for a review. Once that is
         approved, the app's repositories are made and their images built.
   - type: textarea

@@ -6,7 +6,8 @@ runs ``handle`` on it: the spec is checked, committed as apps/<name>.yml on the
 branch app-request/<issue number>, and a pull request is opened. The Validate
 workflow test-builds that pull request's images, then runs ``handoff``: when
 they all build, the reviewers are asked to approve the request, which they do
-by merging it. The Publish workflow takes it from there.
+by merging it. The Publish workflow takes it from there. A maintainer who
+labels the issue `request rejected` closes it, and its pull request, instead.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import base64
 import re
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import quote
 
 import yaml
 
@@ -26,6 +28,7 @@ HEADING = "### App spec"
 BRANCH_PREFIX = "app-request/"
 MARKER = "<!-- app-creator-request -->"
 APPROVED_LABEL = "request approved"
+REJECTED_LABEL = "request rejected"
 # GitHub's author_association values for people in the organisation
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 # the first line of a request's pull request, which later steps read back
@@ -365,16 +368,29 @@ def handle(
     """Turn the request in an `issues` event into a pull request, or say why not.
 
     `approved` skips asking whether to trust the requester: for when a
-    maintainer asked for it, by running the Request workflow by hand."""
+    maintainer asked for it, by running the Request workflow by hand.
+
+    Of the two labels, the one a maintainer added last decides: accepting a
+    rejected request takes `request rejected` off it, and the other way round."""
     issue = event["issue"]
     number = issue["number"]
     requester = issue["user"]["login"]
     if issue.get("state") != "open":
         return "the request is closed"
-    if event.get("action") == "labeled" and (event.get("label") or {}).get("name") != APPROVED_LABEL:
-        return "only the approval label matters"
+    added = (event.get("label") or {}).get("name") if event.get("action") == "labeled" else None
+    if added == REJECTED_LABEL:
+        return reject(gh, repo, issue, (event.get("sender") or {}).get("login"), defaults, log)
+    if event.get("action") == "labeled" and added != APPROVED_LABEL:
+        return "only the approval and rejection labels matter"
 
-    labelled = APPROVED_LABEL in {label["name"] for label in issue.get("labels", [])}
+    labels = {label["name"] for label in issue.get("labels", [])}
+    if REJECTED_LABEL in labels:
+        if added != APPROVED_LABEL and not approved:
+            return f"the request was rejected: take the `{REJECTED_LABEL}` label off it to reconsider it"
+        _unlabel(gh, repo, number, REJECTED_LABEL)
+        log(f"took the {REJECTED_LABEL} label off #{number}: it is accepted after all")
+
+    labelled = APPROVED_LABEL in labels
     everyone = defaults.get("request_approval", "outsiders") == "everyone"
     if not approved and not labelled and (everyone or not trusted(gh, repo, issue, defaults, members)):
         if everyone:
@@ -383,14 +399,15 @@ def handle(
             text = (
                 f"Thanks @{requester}! A maintainer accepts each request before it is built. {who}: adding "
                 f"the `{APPROVED_LABEL}` label to this issue accepts it, and the app creator then opens its "
-                "pull request and test-builds it.\n"
+                f"pull request and test-builds it. The `{REJECTED_LABEL}` label rejects it, and closes "
+                "this issue.\n"
             )
         else:
             text = (
                 f"Thanks @{requester}! Requests are built straight away for members of the organisation and "
                 "its outside collaborators, and the app creator could not find you among them, so a maintainer "
                 f"checks this request first: adding the `{APPROVED_LABEL}` label to this issue turns it into a "
-                "pull request.\n"
+                f"pull request, and the `{REJECTED_LABEL}` label closes it.\n"
             )
         gh.comment(repo, number, text, MARKER)
         return "waiting for a maintainer to approve the request"
@@ -483,6 +500,38 @@ def _other_requests(gh: GitHub, repo: str, path: str, branch: str) -> list[dict]
             }
         )
     return found
+
+
+def _unlabel(gh: GitHub, repo: str, number: int, label: str) -> None:
+    gh.request("DELETE", f"/repos/{repo}/issues/{number}/labels/{quote(label)}")
+
+
+def reject(gh: GitHub, repo: str, issue: dict, by: str | None, defaults: dict, log=print) -> str:
+    """A maintainer labelled the request `request rejected`: close its pull
+    request, if it has one, and the issue, and tell the requester."""
+    number = issue["number"]
+    requester = issue["user"]["login"]
+    owner = repo.split("/")[0]
+    branch = f"{BRANCH_PREFIX}{number}"
+    closed = []
+    for pr in gh.call("GET", f"/repos/{repo}/pulls?state=open&head={owner}:{branch}"):
+        gh.comment(repo, pr["number"], f"Closed: request #{number} was rejected.\n")
+        gh.call("PATCH", f"/repos/{repo}/pulls/{pr['number']}", {"state": "closed"})
+        closed.append(pr["number"])
+        log(f"closed #{pr['number']}")
+    gh.request("DELETE", f"/repos/{repo}/git/refs/heads/{branch}")
+    if APPROVED_LABEL in {label["name"] for label in issue.get("labels", [])}:
+        _unlabel(gh, repo, number, APPROVED_LABEL)
+
+    who = f"@{by} rejected" if by and by.lower() != requester.lower() else "A maintainer rejected"
+    text = f"@{requester}: {who} this request, so the app will not be made."
+    if closed:
+        text += f" Its pull request, #{closed[0]}, is closed."
+    website = defaults.get("website", "")
+    text += "\n\nYou can make a new request" + (f" on the [website]({website})" if website else "") + ".\n"
+    gh.comment(repo, number, text)
+    gh.call("PATCH", f"/repos/{repo}/issues/{number}", {"state": "closed", "state_reason": "not_planned"})
+    return "rejected the request" + (f" and closed #{closed[0]}" if closed else "")
 
 
 def handoff(

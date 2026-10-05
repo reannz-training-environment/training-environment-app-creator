@@ -10,6 +10,10 @@
 # images, and once they all build, asks the reviewers to review it. Merging
 # it is the approval: Publish then makes the app.
 #
+# Labelling the request "request rejected" instead closes it, and its pull
+# request if it has one, and tells the requester. Of the two labels, the one
+# added last decides.
+#
 # To try a request again, run this workflow by hand with its issue number
 # (Actions, Request, Run workflow); that also approves it.
 #
@@ -40,7 +44,8 @@ jobs:
       github.event_name == 'workflow_dispatch' || (
       github.event.issue.state == 'open' &&
       contains(github.event.issue.body, '### App spec') &&
-      (github.event.action != 'labeled' || github.event.label.name == 'request approved'))
+      (github.event.action != 'labeled' ||
+       github.event.label.name == 'request approved' || github.event.label.name == 'request rejected'))
     runs-on: ubuntu-latest
     steps:
       # main's code, never the request's: the issue only supplies data
